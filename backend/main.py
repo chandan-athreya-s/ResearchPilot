@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from app.core.pipeline import run_pipeline
 
-app = FastAPI()
+if __name__ == "__main__":
+    query = input("Enter your research query: ")
+    result = run_pipeline(query)
 
-@app.get("/")
-def home():
-    return {"message": "ResearchPilot is running successfully!"}
+    print("\n=== FINAL OUTPUT ===\n")
+    print(result)
