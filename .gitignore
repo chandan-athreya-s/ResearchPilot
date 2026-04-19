@@ -1,8 +1,14 @@
-venv/
+# Data files
+data/
+*.faiss
+*.pkl
+*.pdf
+
+# Python
 __pycache__/
-.env
 *.pyc
-data/raw/
-data/processed/
-data/embeddings/
+
+# Env
+venv/
+.env
 myspace/
