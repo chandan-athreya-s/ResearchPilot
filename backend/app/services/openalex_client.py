@@ -41,7 +41,8 @@ def reconstruct_abstract(inverted_index):
 def fetch_papers(query, max_results=8):
     params = {
         "search": query,
-        "per-page": max_results
+        "per-page": max_results,
+        "filter": "is_oa:true,concepts.id:C41008148"
     }
 
     response = requests.get(BASE_URL, params=params)
@@ -74,11 +75,14 @@ def fetch_papers(query, max_results=8):
             "abstract": abstract,
             "url": item.get("id"),
             "arxiv_id": arxiv_id,
+            "ids": item.get("ids", {}),
+            "locations": item.get("locations", []),
             "authors": authors,
             "year": year,
             "venue": venue,
             "doi": doi,
-            "pdf_url": pdf_url
+            "pdf_url": pdf_url,
+            "open_access": item.get("open_access", {})
         })
 
     return papers

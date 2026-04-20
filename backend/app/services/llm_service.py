@@ -31,15 +31,20 @@ def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_t
     source_to_label = {}   # Map paper_id to labels
     label_counter = 1
     
+    # Bug 2 fix: Deduplicate paper IDs that should be skipped to prevent duplicate guard logs
+    phantom_refs_logged = set()
+    
     # Process documents and create context with labels
     for doc in docs:
-        paper_id = doc.metadata.get("paper_id")
+        paper_id = doc.metadata.get("paper_id", "unknown")  # Safe access with fallback
         chunk_index = doc.metadata.get("chunk_index", 0)
         content = doc.page_content
         
-        # Only include papers that have extracted text (Bug 1 fix: filter at reference level)
+        # Only include papers that have extracted text (Bug 2 fix: log phantom refs only once)
         if paper_id not in papers_with_extracted_text:
-            print(f"⚠ Skipping phantom reference for {paper_id}")
+            if paper_id not in phantom_refs_logged:
+                print(f"⚠ Skipping phantom reference for {paper_id}")
+                phantom_refs_logged.add(paper_id)
             continue
         
         # Assign label if not already assigned

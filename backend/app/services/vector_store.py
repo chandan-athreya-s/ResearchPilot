@@ -9,13 +9,8 @@ def create_vector_store(chunks):
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
 
-    if INDEX_DIR.exists():
-        vector_store = FAISS.load_local(str(INDEX_DIR), embeddings, allow_dangerous_deserialization=True)
-        # Add new chunks if any
-        if chunks:
-            vector_store.add_documents(chunks)
-    else:
-        vector_store = FAISS.from_documents(chunks, embeddings)
+    # Always create fresh index to avoid phantom chunks from previous runs
+    vector_store = FAISS.from_documents(chunks, embeddings)
     
     # Save the index
     vector_store.save_local(str(INDEX_DIR))

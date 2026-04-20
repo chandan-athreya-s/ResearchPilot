@@ -1,8 +1,6 @@
 import requests
-import os
 from pathlib import Path
 from bs4 import BeautifulSoup
-import time
 import re
 
 PDF_DIR = Path(__file__).parent.parent.parent.parent / "data" / "raw" / "pdfs"
@@ -25,14 +23,18 @@ def download_pdf_with_fallbacks(paper):
     title = paper["title"]
     arxiv_id = paper.get("arxiv_id")
     doi = paper.get("doi")
+    ids = paper.get("ids", {})
     
     sources_tried = []
     
-    # Extract arXiv ID from locations if not already found
+    # Use OpenAlex IDs arxiv field if arXiv ID wasn't inferred from locations.
+    if not arxiv_id:
+        arxiv_id = ids.get("arxiv")
+
     if not arxiv_id:
         locations = paper.get("locations", [])
         for location in locations:
-            landing_page_url = location.get("landing_page_url", "")
+            landing_page_url = location.get("landing_page_url") or ""
             if "arxiv.org" in landing_page_url:
                 match = re.search(r'arxiv\.org/abs/([^/]+)', landing_page_url)
                 if match:
@@ -69,53 +71,22 @@ def download_pdf_with_fallbacks(paper):
             return str(pdf_path)
         except Exception as e:
             print(f"✗ Failed OpenAlex OA URL for {paper_id}: {e}")
+            if "aclweb.org" in oa_url and arxiv_id:
+                print(f"⚠ ACL OA URL failed; trying arXiv mirror for {paper_id}")
+                try:
+                    mirror_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+                    mirror_response = requests.get(mirror_url, timeout=30)
+                    mirror_response.raise_for_status()
+                    filename = f"{paper_id.replace('/', '_')}.pdf"
+                    pdf_path = PDF_DIR / filename
+                    with open(pdf_path, 'wb') as f:
+                        f.write(mirror_response.content)
+                    print(f"✓ Downloaded PDF for {paper_id} from arXiv mirror")
+                    return str(pdf_path)
+                except Exception as mirror_error:
+                    print(f"✗ Failed arXiv mirror for {paper_id}: {mirror_error}")
     
-    # 3. ar5iv HTML
-    if arxiv_id:
-        html_url = f"https://ar5iv.labs.arxiv.org/html/{arxiv_id}"
-        sources_tried.append("ar5iv HTML")
-        try:
-            response = requests.get(html_url, timeout=30)
-            response.raise_for_status()
-            text = extract_text_from_html(response.text)
-            if len(text) > 1000:  # Check if substantial text
-                html_path = PDF_DIR / f"{arxiv_id}.html"
-                with open(html_path, 'w', encoding='utf-8') as f:
-                    f.write(text)
-                print(f"✓ Extracted text from ar5iv for {paper_id}")
-                return str(html_path)
-            else:
-                print(f"✗ ar5iv text too short for {paper_id}")
-        except Exception as e:
-            print(f"✗ Failed ar5iv for {paper_id}: {e}")
-    
-    # 4. Semantic Scholar
-    sources_tried.append("Semantic Scholar")
-    try:
-        ss_url = f"https://api.semanticscholar.org/graph/v1/paper/search?query={requests.utils.quote(title)}&fields=openAccessPdf"
-        response = requests.get(ss_url, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("data") and data["data"][0].get("openAccessPdf", {}).get("url"):
-            pdf_url = data["data"][0]["openAccessPdf"]["url"]
-            # Download the PDF
-            pdf_response = requests.get(pdf_url, timeout=30)
-            pdf_response.raise_for_status()
-            # Use paper_id for filename
-            filename = f"{paper_id.replace('/', '_')}.pdf"
-            pdf_path = PDF_DIR / filename
-            with open(pdf_path, 'wb') as f:
-                f.write(pdf_response.content)
-            print(f"✓ Downloaded PDF for {paper_id} from Semantic Scholar")
-            return str(pdf_path)
-        else:
-            print(f"✗ No open access PDF from Semantic Scholar for {paper_id}")
-    except Exception as e:
-        print(f"✗ Failed Semantic Scholar for {paper_id}: {e}")
-    
-    time.sleep(3)  # Rate limit delay
-    
-    # 5. Unpaywall
+    # 3. Unpaywall
     if doi:
         sources_tried.append("Unpaywall")
         try:
