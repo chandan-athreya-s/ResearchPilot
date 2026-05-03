@@ -9,6 +9,6 @@ langchain-text-splitters
 langchain-huggingface
 faiss-cpu
 sentence-transformers
-openai
 pymupdf
 beautifulsoup4
+langchain-ollama

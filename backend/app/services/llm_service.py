@@ -1,19 +1,12 @@
-from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from langchain_ollama import OllamaLLM
 
-#Load environment variables from .env
+# Load environment variables from .env
 load_dotenv()
 
-#Fetch API key
-api_key = os.getenv("OPENAI_API_KEY")
-
-# (Optional safety check)
-if not api_key:
-    raise ValueError("OPENAI_API_KEY not found in environment variables")
-
-#Initialize client
-client = OpenAI(api_key=api_key)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+client = OllamaLLM(model="qwen2.5:7b", base_url=OLLAMA_BASE_URL)
 
 
 def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_text):
@@ -59,49 +52,38 @@ def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_t
         label = source_to_label[paper_id]
         context_parts.append(f"[{label}, Chunk {chunk_index}]\n{content}")
     
-    context = "\n\n".join(context_parts)
+    formatted_chunks = "\n\n".join(context_parts)
     
     # Debug: Print source diversity
     source_ids = sorted(set(source_to_label.values()))
     print(f"✓ Retrieved chunks from {len(source_ids)} sources: {', '.join(source_ids)}")
     print(f"✓ References will include only papers with extracted text: {len(source_references)} sources")
-    
-    # Build reference guide for the prompt
-    references_guide = "\n".join(
-        [f"[{label}]: {info.get('title', 'Unknown')} ({info.get('url', 'Unknown')})" 
-         for label, info in source_references.items()]
-    )
 
-    prompt = f"""
-    Answer the query using STRICTLY the provided context chunks. Do not introduce any information not present in the retrieved chunks. If the chunks do not support a claim, omit it.
+    prompt = f"""You are a research assistant writing a report.
 
-    Structure your response in the following format:
+RETRIEVED CONTEXT:
+{formatted_chunks}
 
-    1. Introduction: Provide a brief overview of the topic based on the context.
-    2. Key Findings: Summarize the main points and insights from the sources. You have been given chunks from multiple different sources. You MUST cite at least one chunk from each available source number in your Key Findings. If you have Sources 1, 2, and 3, each must appear at least once in the body. When making a claim, add an inline citation tag immediately after the sentence, e.g. [Source 3, Chunk 2]. Never cite the same [Source N, Chunk X] pair more than once.
-    3. Conclusion: Offer a concise conclusion based on the findings.
+RESEARCH QUERY: {query}
 
-    Keep the response concise. Base every claim strictly on the context chunks provided.
+Instructions:
+- Write an Introduction of 2-3 sentences about the topic.
+- Write exactly 3 Key Findings. Each finding must:
+    * Be a specific claim drawn from the context above
+    * End with the source number and chunk number in parentheses
+      like this: (Source 1, Chunk 23)
+- Write a Conclusion of 2-3 sentences.
+- Do not repeat findings in the conclusion.
+- Do not write "Thank you" or any conversational phrases.
+- Do not output any instruction text — only output the report.
 
-    If the context does not contain enough information to answer the query, say:
-    "I don't have enough information from the retrieved papers."
+Begin the report now:
 
-    Query:
-    {query}
+Introduction:"""
 
-    Source Reference Guide:
-    {references_guide}
-
-    Context:
-    {context}
-    """
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    answer = response.choices[0].message.content
+    # Use the installed OllamaLLM API directly with a prompt list
+    response = client.generate([prompt])
+    answer = response.generations[0][0].text
     
     # Post-process: verify citations
     verified_answer = post_process_citations(answer, source_references)
