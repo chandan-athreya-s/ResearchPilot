@@ -8,7 +8,12 @@ backend/data/
 __pycache__/
 *.pyc
 
-# Env
+# Virtual environments
 venv/
+.venv/
+
+# Environment files
 .env
+
+# Workspace
 myspace/

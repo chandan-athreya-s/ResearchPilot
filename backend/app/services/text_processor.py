@@ -27,24 +27,28 @@ def process_documents(papers):
         # Include title in page_content for better context
         page_content = f"Title: {title}\n\n{content}"
         
+        metadata = {
+            "title": title,
+            "url": url,
+            "paper_id": paper.get("paper_id"),
+            "authors": paper.get("authors", []),
+            "year": paper.get("year"),
+            "venue": paper.get("venue"),
+            "doi": paper.get("doi")
+        }
+        if paper.get("document_type") == "abstract_only":
+            metadata["abstract_fallback"] = True
+
         doc = Document(
             page_content=page_content,
-            metadata={
-                "title": title, 
-                "url": url, 
-                "paper_id": paper.get("paper_id"),
-                "authors": paper.get("authors", []),
-                "year": paper.get("year"),
-                "venue": paper.get("venue"),
-                "doi": paper.get("doi")
-            }
+            metadata=metadata
         )
         documents.append(doc)
 
     # Chunk documents while preserving metadata
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
+        chunk_size=1200,
+        chunk_overlap=150,
         separators=["\n\n", "\n", " ", ""]
     )
 

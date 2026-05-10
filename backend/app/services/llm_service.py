@@ -1,4 +1,8 @@
+import json
+import logging
 import os
+
+import httpx
 from dotenv import load_dotenv
 from langchain_ollama import OllamaLLM
 
@@ -6,7 +10,34 @@ from langchain_ollama import OllamaLLM
 load_dotenv()
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-client = OllamaLLM(model="qwen2.5:7b", base_url=OLLAMA_BASE_URL)
+OLLAMA_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
+OLLAMA_CLIENT = OllamaLLM(
+    model="qwen2.5:7b",
+    base_url=OLLAMA_BASE_URL,
+    client_kwargs={"timeout": OLLAMA_TIMEOUT},
+)
+
+logger = logging.getLogger(__name__)
+
+
+def ollama_generate_text(prompt: str) -> str:
+    """Generate text from Ollama with a hard timeout and graceful fallback."""
+    try:
+        response = OLLAMA_CLIENT.generate([prompt])
+        if not response or not getattr(response, "generations", None):
+            return ""
+
+        generations = response.generations
+        if not generations or not generations[0]:
+            return ""
+
+        return generations[0][0].text or ""
+    except httpx.TimeoutException:
+        logger.error("Ollama generate timed out after 120s. Returning partial/empty result.")
+        return ""
+    except Exception as e:
+        logger.error(f"Ollama generate failed: {e}")
+        return ""
 
 
 def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_text):
@@ -82,7 +113,7 @@ Begin the report now:
 Introduction:"""
 
     # Use the installed OllamaLLM API directly with a prompt list
-    response = client.generate([prompt])
+    response = OLLAMA_CLIENT.generate([prompt])
     answer = response.generations[0][0].text
     
     # Post-process: verify citations

@@ -1,9 +1,11 @@
-from sentence_transformers import CrossEncoder
 from collections import defaultdict
 
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+from .model_manager import get_reranker_model
 
-def retrieve_chunks(vector_store, query):
+reranker = get_reranker_model()
+
+
+def retrieve_chunks(vector_store, query, k=5):
     # Step 1 — retrieve a large candidate pool from FAISS:
     candidate_docs = vector_store.similarity_search(query, k=30)
 
@@ -18,9 +20,9 @@ def retrieve_chunks(vector_store, query):
     for source_id, docs in grouped.items():
         capped.extend(docs[:3])
 
-    # Step 4 — rerank the capped pool and take top 5:
+    # Step 4 — rerank the capped pool and take top k:
     reranked = rerank(query, capped)  # your existing reranker call
-    final_docs = reranked[:5]
+    final_docs = reranked[:k]
 
     # Step 5 — log which sources made it through:
     source_ids = set(d.metadata.get("paper_id", "unknown") for d in final_docs)
@@ -31,6 +33,9 @@ def retrieve_chunks(vector_store, query):
 def rerank(query, docs):
     if not docs:
         return []
+    if reranker is None:
+        print("⚠️ sentence-transformers unavailable; skipping re-ranking")
+        return docs
     passages = [doc.page_content for doc in docs]
     rerank_scores = reranker.predict([(query, passage) for passage in passages])
     reranked = sorted(zip(docs, rerank_scores), key=lambda x: x[1], reverse=True)
