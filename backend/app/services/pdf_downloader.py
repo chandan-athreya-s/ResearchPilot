@@ -51,8 +51,15 @@ def download_pdf_with_fallbacks(paper):
             pdf_path = PDF_DIR / f"{arxiv_id}.pdf"
             with open(pdf_path, 'wb') as f:
                 f.write(response.content)
-            print(f"✓ Downloaded PDF for {paper_id} from arXiv")
-            return str(pdf_path)
+            
+            # FIX: Validate downloaded PDF before marking success
+            if pdf_path.exists() and pdf_path.stat().st_size > 0:
+                print(f"✓ Downloaded PDF for {paper_id} from arXiv")
+                return str(pdf_path)
+            else:
+                print(f"✗ Downloaded PDF for {paper_id} is empty/corrupted, skipping")
+                pdf_path.unlink(missing_ok=True)  # Clean up invalid file
+                return None
         except Exception as e:
             print(f"✗ Failed arXiv PDF for {paper_id}: {e}")
     
@@ -67,8 +74,15 @@ def download_pdf_with_fallbacks(paper):
             pdf_path = PDF_DIR / filename
             with open(pdf_path, 'wb') as f:
                 f.write(response.content)
-            print(f"✓ Downloaded PDF for {paper_id} from OpenAlex OA URL")
-            return str(pdf_path)
+            
+            # FIX: Validate downloaded PDF before marking success
+            if pdf_path.exists() and pdf_path.stat().st_size > 0:
+                print(f"✓ Downloaded PDF for {paper_id} from OpenAlex OA URL")
+                return str(pdf_path)
+            else:
+                print(f"✗ Downloaded PDF for {paper_id} is empty/corrupted, skipping")
+                pdf_path.unlink(missing_ok=True)  # Clean up invalid file
+                return None
         except Exception as e:
             print(f"✗ Failed OpenAlex OA URL for {paper_id}: {e}")
             if "aclweb.org" in oa_url and arxiv_id:
@@ -81,8 +95,15 @@ def download_pdf_with_fallbacks(paper):
                     pdf_path = PDF_DIR / filename
                     with open(pdf_path, 'wb') as f:
                         f.write(mirror_response.content)
-                    print(f"✓ Downloaded PDF for {paper_id} from arXiv mirror")
-                    return str(pdf_path)
+                    
+                    # FIX: Validate downloaded PDF before marking success
+                    if pdf_path.exists() and pdf_path.stat().st_size > 0:
+                        print(f"✓ Downloaded PDF for {paper_id} from arXiv mirror")
+                        return str(pdf_path)
+                    else:
+                        print(f"✗ Downloaded PDF for {paper_id} is empty/corrupted, skipping")
+                        pdf_path.unlink(missing_ok=True)  # Clean up invalid file
+                        return None
                 except Exception as mirror_error:
                     print(f"✗ Failed arXiv mirror for {paper_id}: {mirror_error}")
     
@@ -104,8 +125,15 @@ def download_pdf_with_fallbacks(paper):
                 pdf_path = PDF_DIR / filename
                 with open(pdf_path, 'wb') as f:
                     f.write(pdf_response.content)
-                print(f"✓ Downloaded PDF for {paper_id} from Unpaywall")
-                return str(pdf_path)
+                
+                # FIX: Validate downloaded PDF before marking success
+                if pdf_path.exists() and pdf_path.stat().st_size > 0:
+                    print(f"✓ Downloaded PDF for {paper_id} from Unpaywall")
+                    return str(pdf_path)
+                else:
+                    print(f"✗ Downloaded PDF for {paper_id} is empty/corrupted, skipping")
+                    pdf_path.unlink(missing_ok=True)  # Clean up invalid file
+                    return None
             else:
                 print(f"✗ No PDF from Unpaywall for {paper_id}")
         except Exception as e:

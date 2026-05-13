@@ -5,9 +5,16 @@ from app.services.text_processor import process_documents
 from app.services.vector_store import create_vector_store
 from app.services.retriever import retrieve_chunks
 from app.services.llm_service import generate_answer
+from app.services.query_analyzer import analyze_query
 
 
 def run_pipeline(query):
+    # Analyze query intent and extract focus terms
+    print("Analyzing query...")
+    query_intent = analyze_query(query)
+    print(f"✓ Query type: {query_intent['query_type']}")
+    print(f"  Focus terms: {', '.join(query_intent['focus_terms'])}")
+    
     print("Fetching papers...")
     papers = fetch_papers(query)
     
@@ -93,7 +100,7 @@ def run_pipeline(query):
     vector_store = create_vector_store(capped_chunks)
 
     print("Retrieving relevant chunks...")
-    docs = retrieve_chunks(vector_store, query)
+    docs = retrieve_chunks(vector_store, query, query_intent=query_intent)
     print(f"Number of docs retrieved: {len(docs)}")
 
     print("Generating answer...")
