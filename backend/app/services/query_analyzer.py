@@ -221,6 +221,54 @@ class QueryAnalyzer:
         }
 
 
+def extract_comparison_pairs(query: str) -> List[Tuple[str, str]]:
+    """Extract comparison element pairs from comparison queries.
+    
+    Identifies what is being compared (A vs B).
+    
+    Args:
+        query: The research query string
+        
+    Returns:
+        List of (item_a, item_b) tuples being compared
+    """
+    query_lower = query.lower().strip()
+    query_lower = re.sub(r"[\-—]", " ", query_lower)
+    
+    # Comprehensive comparison patterns
+    patterns = [
+        (r"comparison\s+(?:between|of)\s+(.+?)\s+and\s+(.+?)(?:\.|$|:|;|\?)", 2),
+        (r"compare\s+(.+?)\s+(?:and|with|to|versus|vs\.?)\s+(.+?)(?:\.|$|:|;|\?)", 2),
+        (r"(.+?)\s+(?:vs|versus|v\.)\s+(.+?)(?:\.|$|:|;|\?|in|for)", 2),
+        (r"(.+?)\s+compared\s+(?:to|with)\s+(.+?)(?:\.|$|:|;|\?)", 2),
+        (r"(.+?)\s+against\s+(.+?)(?:\.|$|:|;|\?)", 2),
+        (r"difference(?:s)?\s+between\s+(.+?)\s+and\s+(.+?)(?:\.|$|:|;|\?)", 2),
+        (r"contrast(?:ing|ing)?\s+(.+?)\s+(?:and|with)\s+(.+?)(?:\.|$|:|;|\?)", 2),
+    ]
+    
+    pairs = []
+    for pattern, group_count in patterns:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            if group_count == 2:
+                left = match.group(1).strip()
+                right = match.group(2).strip()
+            else:
+                left = match.group(1).strip()
+                right = match.group(2).strip()
+            
+            # Clean extracted terms
+            left = re.sub(r"^(the|a|an)\s+", "", left)
+            right = re.sub(r"^(the|a|an)\s+", "", right)
+            left = re.sub(r"\s+(in|for|on|to)\s+.*$", "", left)
+            right = re.sub(r"\s+(in|for|on|to)\s+.*$", "", right)
+            
+            if left and right and len(left) > 2 and len(right) > 2:
+                pairs.append((left, right))
+    
+    return pairs
+
+
 def analyze_query(query: str) -> Dict:
     """Convenience function for query analysis.
     
@@ -228,6 +276,14 @@ def analyze_query(query: str) -> Dict:
         query: The research query string
         
     Returns:
-        Dictionary with query_type, focus_terms, and original_query
+        Dictionary with query_type, focus_terms, comparison_pairs, and original_query
     """
-    return QueryAnalyzer.analyze(query)
+    analysis = QueryAnalyzer.analyze(query)
+    
+    # Add comparison pairs for comparison queries
+    if analysis["query_type"] == "comparison":
+        analysis["comparison_pairs"] = extract_comparison_pairs(query)
+    else:
+        analysis["comparison_pairs"] = []
+    
+    return analysis

@@ -104,6 +104,6 @@ def run_pipeline(query):
     print(f"Number of docs retrieved: {len(docs)}")
 
     print("Generating answer...")
-    answer = generate_answer(query, docs, filtered_papers, metadata_store, papers_with_extracted_text)
+    answer = generate_answer(query, docs, filtered_papers, metadata_store, papers_with_extracted_text, query_intent=query_intent)
 
     return answer
