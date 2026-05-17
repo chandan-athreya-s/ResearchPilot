@@ -1,7 +1,11 @@
-import fitz  # PyMuPDF
-
 def extract_text_from_pdf(pdf_path):
     if not pdf_path:
+        return ""
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        print("PyMuPDF is not installed; cannot extract PDF text.")
         return ""
 
     if pdf_path.endswith('.html'):

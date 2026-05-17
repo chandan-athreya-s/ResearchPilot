@@ -1,8 +1,14 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
-
 def process_documents(papers):
     """Process papers into Document objects with metadata preserved during chunking."""
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        from langchain_core.documents import Document
+    except ImportError as error:
+        raise ImportError(
+            "langchain_text_splitters and langchain_core are required to process documents. "
+            "Install the required packages or mock process_documents in tests."
+        ) from error
+
     valid_papers = []
     for paper in papers:
         if paper.get("full_text"):
@@ -43,8 +49,8 @@ def process_documents(papers):
 
     # Chunk documents while preserving metadata
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100,
+        chunk_size=1400,
+        chunk_overlap=80,
         separators=["\n\n", "\n", " ", ""]
     )
 

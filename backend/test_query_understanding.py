@@ -4,7 +4,20 @@
 import sys
 sys.path.insert(0, '/home/chandan-athreya-s/Major-Project/ResearchPilot/backend')
 
-from app.services.query_analyzer import QueryAnalyzer, analyze_query
+from app.services.query_analyzer import QueryAnalyzer, analyze_query, extract_comparison_pairs
+
+
+def test_comparison_pair_normalization():
+    """Test that comparison extraction trims trailing phrases."""
+    print("=" * 70)
+    print("TEST 0: COMPARISON PAIR NORMALIZATION")
+    print("=" * 70)
+
+    query = "comparison of retrieval augmented generation and fine tuning for enterprise knowledge systems"
+    pairs = extract_comparison_pairs(query)
+    print(f"Query: {query}")
+    print(f"  Extracted pairs: {pairs}")
+    assert pairs and pairs[0] == ("retrieval augmented generation", "fine tuning"), "Comparison pair normalization failed"
 
 
 def test_query_type_detection():

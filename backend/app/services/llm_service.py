@@ -1,13 +1,28 @@
 import os
 import re
-from dotenv import load_dotenv
-from langchain_ollama import OllamaLLM
+from typing import Dict, List
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv():
+        return None
 
 # Load environment variables from .env
 load_dotenv()
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-client = OllamaLLM(model="qwen2.5:7b", base_url=OLLAMA_BASE_URL)
+
+
+def _get_ollama_client():
+    try:
+        from langchain_ollama import OllamaLLM
+    except ImportError as error:
+        raise ImportError(
+            "langchain_ollama is required for LLM generation. "
+            "Install the package or mock generate_answer in tests."
+        ) from error
+    return OllamaLLM(model="qwen2.5:7b", base_url=OLLAMA_BASE_URL)
 
 
 def classify_chunk_aspects(chunk_content: str) -> dict:
@@ -73,177 +88,53 @@ def scaffold_evidence_for_comparison(docs, query_intent: dict = None):
 
 
 def generate_comparison_aware_prompt(query: str, docs, aspect_groups: dict = None, comparison_pairs: list = None) -> str:
-    """Generate a comparison-specific prompt for evidence-grounded synthesis.
-    
-    Creates structured prompt that guides comparative analysis with evidence scaffolding.
-    """
+    """Generate a concise comparison prompt for evidence-grounded synthesis."""
     if aspect_groups is None:
         aspect_groups = {}
     if comparison_pairs is None:
         comparison_pairs = []
-    
-    # Build context with explicit aspect organization
-    context_parts = []
-    
-    # Organize by aspect for comparison clarity
-    if aspect_groups and any(aspect_groups.values()):
-        context_parts.append("EVIDENCE ORGANIZED BY RESEARCH ASPECT:\n")
-        
-        if aspect_groups.get("methods"):
-            context_parts.append("METHODOLOGIES & APPROACHES:")
-            for label, content, _ in aspect_groups["methods"]:
-                context_parts.append(f"{label}\n{content}")
+
+    context_parts = ["EVIDENCE CORPUS:"]
+    for label, header in [
+        ("methods", "METHODOLOGIES & APPROACHES"),
+        ("datasets", "DATASETS & BENCHMARKS"),
+        ("metrics", "PERFORMANCE METRICS"),
+        ("tradeoffs", "TRADEOFFS & LIMITATIONS"),
+        ("computational", "COMPUTATIONAL EFFICIENCY"),
+        ("architecture", "ARCHITECTURE & DESIGN"),
+        ("limitations", "LIMITATIONS"),
+        ("applications", "APPLICATIONS"),
+    ]:
+        items = aspect_groups.get(label)
+        if items:
+            context_parts.append(f"{header}:")
+            for source_label, content, _ in items:
+                context_parts.append(f"{source_label}\n{content}")
             context_parts.append("")
-        
-        if aspect_groups.get("datasets"):
-            context_parts.append("DATASETS & EVALUATION BENCHMARKS:")
-            for label, content, _ in aspect_groups["datasets"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-        
-        if aspect_groups.get("metrics"):
-            context_parts.append("PERFORMANCE METRICS & RESULTS:")
-            for label, content, _ in aspect_groups["metrics"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-        
-        if aspect_groups.get("tradeoffs"):
-            context_parts.append("EXPLICIT TRADEOFFS & COMPARISONS:")
-            for label, content, _ in aspect_groups["tradeoffs"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-        
-        if aspect_groups.get("computational"):
-            context_parts.append("COMPUTATIONAL & EFFICIENCY CONSIDERATIONS:")
-            for label, content, _ in aspect_groups["computational"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-        
-        if aspect_groups.get("architecture"):
-            context_parts.append("TECHNICAL ARCHITECTURE & DESIGN:")
-            for label, content, _ in aspect_groups["architecture"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-        
-        if aspect_groups.get("limitations"):
-            context_parts.append("LIMITATIONS & CHALLENGES:")
-            for label, content, _ in aspect_groups["limitations"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-        
-        if aspect_groups.get("applications"):
-            context_parts.append("APPLICATIONS & USE CASES:")
-            for label, content, _ in aspect_groups["applications"]:
-                context_parts.append(f"{label}\n{content}")
-            context_parts.append("")
-    
-    formatted_chunks = "\n".join(context_parts)
-    
-    # Build comparison-specific prompt
-    comparison_instruction = ""
-    if comparison_pairs:
-        comparison_pairs_str = "\n".join([f"  - {a} vs. {b}" for a, b in comparison_pairs[:3]])
-        comparison_instruction = f"""
+
+    comparison_pairs_str = "\n".join([f"- {a} vs {b}" for a, b in comparison_pairs[:3]])
+
+    prompt = f"""You are a research analyst specializing in comparative technical evaluation.
+
+{'\n'.join(context_parts)}
+QUERY: {query}
+
 COMPARISON FOCUS:
-Provide explicit comparative analysis of:
-{comparison_pairs_str}
+{comparison_pairs_str or '- No explicit comparison pair found'}
 
-For each pair, structure your analysis around:
-1. **Methodological Approach**: How do they differ technically? [cite evidence]
-2. **Performance & Metrics**: Which performs better on what metrics? [cite specific results]
-3. **Computational Efficiency**: What are the computational tradeoffs? [cite evidence]
-4. **Use Case Suitability**: When is each preferred? What domains? [cite examples]
-5. **Architectural Differences**: Key technical distinctions? [cite details]
-6. **Acknowledged Tradeoffs**: What do papers explicitly identify as tradeoffs?
-7. **Research Gaps**: Where do they diverge in addressing challenges?
-"""
-    
-    prompt = f"""You are an expert research analyst specializing in comparative technical analysis.
+TASK: Compare the listed approaches using only the evidence above. Cite every technical claim as [N]. Avoid unsupported claims.
 
-EVIDENCE CORPUS (organized by research aspect):
-{formatted_chunks}
+STRUCTURE:
+1. EXECUTIVE SUMMARY: Key technical differences and most significant distinction.
+2. Methodological Approach: Compare algorithmic/design choices.
+3. PERFORMANCE ANALYSIS: Compare metrics, results, and benchmarks.
+4. COMPUTATIONAL TRADEOFFS: Compare efficiency, memory, and scalability.
+5. USE CASE SUITABILITY: When each approach is most appropriate.
+6. EXPLICITLY IDENTIFIED TRADEOFFS: Explicit tradeoffs from the papers.
+7. GAPS: What remains unresolved or under-addressed.
+8. CONCLUSION: Grounded synthesis, no new speculation.
 
-RESEARCH QUERY: {query}
-{comparison_instruction}
-
-TASK: Generate a structured comparative research synthesis that:
-1. Extracts concrete technical differences (not generic statements)
-2. Grounds every comparative claim in the evidence above
-3. Identifies and explains tradeoffs explicitly
-4. Maps use-case suitability based on technical characteristics
-5. Avoids vague language ("may", "could", "likely") - use only what evidence supports
-6. Synthesizes across papers rather than treating each separately
-
-STRICT EVIDENCE GROUNDING:
-- EVERY technical claim, comparison, or finding must cite its source using numeric bracket references only, e.g. [1], [2]
-- Do not use internal labels such as Source N or Chunk M in the final report
-- When comparing approaches: cite specifics from each approach's evidence
-- When discussing tradeoffs: cite which paper identifies each tradeoff
-- Do not make unsupported generalizations
-- If evidence is insufficient for a claim, omit it
-- Do not generate a References section; a single canonical REFERENCES section will be appended after your answer
-
-REPORT STRUCTURE:
-
-1. EXECUTIVE SUMMARY
-- 2-3 sentences: Key technical differences between compared approaches
-- Lead with most significant methodological distinction [cite evidence]
-
-2. COMPARATIVE METHODOLOGIES  
-Detailed side-by-side technical analysis:
-- Approach A:
-  * Algorithm/Architecture: [cite specific details]
-  * Key Parameters/Design Choices: [cite evidence]
-  * Technical Innovation: [cite distinguishing features]
-- Approach B:
-  * Algorithm/Architecture: [cite specific details]
-  * Key Parameters/Design Choices: [cite evidence]
-  * Technical Innovation: [cite distinguishing features]
-- Methodological Synthesis: Explicit comparison of design philosophy, scalability assumptions, optimization targets [cite evidence]
-
-3. PERFORMANCE ANALYSIS
-For each relevant metric:
-- Metric: [name]
-- Approach A Result: [value] [cite source, dataset]
-- Approach B Result: [value] [cite source, dataset]
-- Interpretation: Which is superior for what scenario? [cite evidence supporting interpretation]
-
-4. COMPUTATIONAL TRADEOFFS
-Explicit analysis of efficiency considerations:
-- Memory Requirements: A vs. B [cite evidence]
-- Runtime Complexity: A vs. B [cite evidence]
-- Scalability: A vs. B [cite evidence]
-- Which is preferred for resource-constrained scenarios? [cite supporting evidence]
-
-5. USE CASE SUITABILITY
-Based on technical characteristics, when is each approach appropriate?
-- Approach A suited for: [specific use cases/domains] because [cite technical evidence]
-- Approach B suited for: [specific use cases/domains] because [cite technical evidence]
-- Domain-specific considerations: [cite examples from papers]
-
-6. EXPLICITLY IDENTIFIED TRADEOFFS
-What do the papers themselves identify as core tradeoffs?
-- Tradeoff 1: [Description] [cite paper that identifies this]
-- Tradeoff 2: [Description] [cite paper that identifies this]
-- Synthesis: How do researchers characterize the fundamental tension?
-
-7. RESEARCH GAPS & OPEN QUESTIONS
-- What does approach A not address that B does? [cite evidence]
-- What limitations does approach B have that A avoids? [cite evidence]
-- What remains unsolved in both approaches? [cite evidence]
-
-8. CONCLUSION
-- Synthesize the state of comparative research on this topic (not a summary)
-- What are the key takeaways for practitioners/researchers? [cite evidence]
-- No vague future speculations - only grounded observations
-
-REFERENCES
-[Will be auto-generated from sources]
-
-OUTPUT ONLY THE REPORT. Begin now:
-
-1. EXECUTIVE SUMMARY"""
-    
+Do not use internal labels such as Source N or Chunk M in the final report. Do not generate a References section; it will be appended after your answer."""
     return prompt
 
 
@@ -299,14 +190,102 @@ def replace_internal_source_citations(answer: str, old_to_new_ref_num: dict) -> 
     return answer.strip()
 
 
+def validate_citations(answer: str, valid_ids: List[int]) -> str:
+    """Remove citations that do not map to existing reference IDs."""
+    if not answer:
+        return answer
+
+    valid_set = set(valid_ids)
+
+    def replace(match):
+        source_num = int(match.group(1))
+        return f"[{source_num}]" if source_num in valid_set else ""
+
+    answer = re.sub(r'\[\s*(\d+)\s*\]', replace, answer)
+    answer = re.sub(r'\[\s*\]', '', answer)
+    answer = re.sub(r'\s+([.,;:])', r'\1', answer)
+    answer = re.sub(r'\s{2,}', ' ', answer)
+    answer = re.sub(r' +\n', '\n', answer)
+    return answer.strip()
+
+
+def validate_inline_author_year_mentions(answer: str, source_references: dict) -> str:
+    """Remove unsupported author/year mentions that are not backed by valid sources."""
+    if not answer:
+        return answer
+
+    valid_surnames = set()
+    valid_years = set()
+    for source_info in source_references.values():
+        authors = source_info.get("authors", []) or []
+        for author in authors:
+            if isinstance(author, str):
+                surname = author.strip().split()[-1]
+                if surname:
+                    valid_surnames.add(surname)
+        year = source_info.get("year")
+        if year:
+            valid_years.add(str(year))
+
+    def replace_author_year(match):
+        surname = match.group(1)
+        year = match.group(2)
+        if surname not in valid_surnames or (year and year not in valid_years):
+            return ""
+        return match.group(0)
+
+    answer = re.sub(r'\b([A-Z][a-z]+) et al\.\s*\(?([0-9]{4})\)?', replace_author_year, answer)
+    answer = re.sub(r'\b([A-Z][a-z]+)\s*\(\s*([0-9]{4})\s*\)', replace_author_year, answer)
+    answer = re.sub(r'\s+([.,;:])', r'\1', answer)
+    answer = re.sub(r'\s{2,}', ' ', answer)
+    return answer.strip()
+
+
+def remove_placeholder_citations(answer: str) -> tuple[str, int]:
+    """Remove placeholder citations like [N123] or (N123) and count removals."""
+    if not answer:
+        return answer, 0
+    placeholders = re.findall(r'\[\s*N\d+\s*\]|\(\s*N\d+\s*\)', answer, flags=re.I)
+    cleaned = re.sub(r'\[\s*N\d+\s*\]|\(\s*N\d+\s*\)', '', answer, flags=re.I)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned, len(placeholders)
+
+
 def clean_final_answer(answer: str, old_to_new_ref_num: dict) -> str:
     """Clean the generated text before appending a single canonical References section."""
     answer = strip_generated_reference_section(answer)
     answer = replace_internal_source_citations(answer, old_to_new_ref_num)
+    valid_ids = sorted(set(old_to_new_ref_num.values()))
+    answer = validate_citations(answer, valid_ids)
     return answer
 
 
-def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_text, query_intent: dict = None):
+def compress_context_chunks(docs, max_chars: int = 1200):
+    """Compress document content to reduce prompt bloat while preserving meaning."""
+    for doc in docs:
+        content = doc.page_content
+        content = re.sub(r'\s+', ' ', content).strip()
+        lines = [line.strip() for line in content.split('\n') if line.strip()]
+        seen = set()
+        deduped_lines = []
+        for line in lines:
+            if line in seen:
+                continue
+            seen.add(line)
+            deduped_lines.append(line)
+
+        compressed = '\n'.join(deduped_lines)
+        if len(compressed) > max_chars:
+            compressed = compressed[:max_chars].rstrip()
+            if not compressed.endswith('.'):
+                compressed = compressed.rsplit(' ', 1)[0].rstrip()
+            compressed += ' ...'
+
+        doc.page_content = compressed
+    return docs
+
+
+def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_text, query_intent: dict = None, diagnostics: dict = None):
     """Generate an answer based on retrieved documents with proper source tracking.
     
     Args:
@@ -325,6 +304,7 @@ def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_t
     
     # For comparison queries, use specialized evidence scaffolding
     if is_comparison_query:
+        docs = compress_context_chunks(docs)
         aspect_groups = scaffold_evidence_for_comparison(docs, query_intent)
         comparison_pairs = query_intent.get("comparison_pairs", [])
         prompt = generate_comparison_aware_prompt(query, docs, aspect_groups, comparison_pairs)
@@ -339,6 +319,7 @@ def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_t
         phantom_refs_logged = set()
         
         # Process documents and create context with labels
+        docs = compress_context_chunks(docs)
         for doc in docs:
             paper_id = doc.metadata.get("paper_id", "unknown")  # Safe access with fallback
             chunk_index = doc.metadata.get("chunk_index", 0)
@@ -370,70 +351,30 @@ def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_t
         print(f"✓ Retrieved chunks from {len(source_ids)} sources: {', '.join(source_ids)}")
         print(f"✓ References will include only papers with extracted text: {len(source_references)} sources")
 
-        prompt = f"""You are an expert research analyst synthesizing findings from academic papers.
+        prompt = f"""You are a research analyst who writes concise, evidence-grounded technical syntheses.
 
-RETRIEVED CONTEXT:
+RETRIEVED EVIDENCE:
 {formatted_chunks}
 
 RESEARCH QUERY: {query}
 
-TASK: Generate a structured research synthesis report (not a summary). Synthesize across papers, identify patterns, and provide critical analysis.
+TASK: Synthesize the evidence into a structured research report. Cite every claim with numeric brackets [N]. Avoid unsupported language.
 
-STRICT RULES FOR CITATIONS:
-- EVERY technical claim, finding, or result must cite its source using numeric bracket references only, e.g. [1], [2]
-- Do not use internal labels such as Source N, Chunk M, or any debug identifiers in the final report
-- Do not make unsupported claims
-- Do not cite sources not present in the context above
-- Do not generate a References section; a single canonical REFERENCES section will be appended after your answer
+STRUCTURE:
+1. INTRODUCTION: 2-3 sentences about scope and significance.
+2. METHODS & APPROACHES: Compare technical approaches and architectures.
+3. FINDINGS: List the strongest evidence-backed insights.
+4. LIMITATIONS & CHALLENGES: Note weaknesses or open problems.
+5. FUTURE DIRECTIONS: Extract stated future work or likely next steps.
+6. CONCLUSION: Provide a brief, grounded summary.
 
-REPORT STRUCTURE:
+Do not use internal labels such as Source N or Chunk M in the final answer. Do not generate a References section; it will be appended after your answer.
 
-1. INTRODUCTION
-- 2-3 sentences establishing the research context and significance
-- Briefly outline the scope of this analysis
-- Do NOT include citations in introduction
-
-2. METHODS & APPROACHES
-- Identify distinct methodological approaches mentioned in the papers
-- For each approach: describe its key components and technical details [Source X, Chunk Y]
-- When 2+ approaches exist: compare them - highlight similarities, differences, trade-offs [Source X, Chunk Y] [Source Z, Chunk W]
-- Focus on technical depth: algorithms, architectures, key parameters, novel techniques
-- Avoid generic descriptions; extract specific technical concepts
-
-3. IMPORTANT FINDINGS
-- Present 4-6 key findings that synthesize across papers (NOT just one-per-paper)
-- Each finding should:
-  * Combine insights from related chunks and papers
-  * Include specific results, metrics, or observations [Source X, Chunk Y]
-  * When findings differ across sources, highlight the differences [Source A] vs [Source B]
-  * Extract actionable insights, not just facts
-- Group related findings thematically rather than by source
-
-4. LIMITATIONS & CHALLENGES
-- Identify technical limitations acknowledged in the papers [Source X, Chunk Y]
-- Note open problems or gaps in the research [Source X, Chunk Y]
-- Discuss trade-offs between different approaches when mentioned [Source X, Chunk Y]
-- Include both acknowledged limitations and inferred gaps from the context
-
-5. FUTURE DIRECTIONS
-- Extract stated future work from the papers [Source X, Chunk Y]
-- Identify promising research directions based on current findings [Source X, Chunk Y]
-- Suggest logical next steps given the current state of methods/findings
-
-6. CONCLUSION
-- 2-3 sentences synthesizing the overall state of research on this topic
-- Do NOT repeat findings; instead provide meta-analysis
-- Do NOT include citations in conclusion
-
-REFERENCES
-[Will be auto-generated from sources]
-
-OUTPUT ONLY THE REPORT. No meta-commentary, explanations, or instruction acknowledgments.
-Begin now:
-
+OUTPUT ONLY THE REPORT. Begin now:
 1. INTRODUCTION"""
         
         # Use the installed OllamaLLM API directly with a prompt list
+        client = _get_ollama_client()
         response = client.generate([prompt])
         answer = response.generations[0][0].text
         
@@ -448,8 +389,15 @@ Begin now:
             old_to_new_ref_num[old_source_num] = new_num
         
         # Post-process: verify and replace internal citations with clean academic format
-        verified_answer = post_process_citations(answer, source_references, old_to_new_ref_num)
+        verified_answer, citation_stats = post_process_citations(answer, source_references, old_to_new_ref_num)
         verified_answer = clean_final_answer(verified_answer, old_to_new_ref_num)
+        if diagnostics is not None:
+            diagnostics["citation_cleanup_count"] = citation_stats.get("placeholder_removed", 0) + citation_stats.get("invalid", 0)
+            diagnostics["grounding_validation"] = {
+                "replaced": citation_stats.get("replaced", 0),
+                "invalid": citation_stats.get("invalid", 0),
+                "placeholder_removed": citation_stats.get("placeholder_removed", 0),
+            }
         
         # Build structured References section with new sequential numbering and clean DOIs
         references_section = "\n\nREFERENCES\n"
@@ -493,6 +441,7 @@ Begin now:
     # Handle comparison queries with specialized synthesis
     if is_comparison_query:
         # Use the comparison-aware prompt with client
+        client = _get_ollama_client()
         response = client.generate([prompt])
         answer = response.generations[0][0].text
         
@@ -527,8 +476,15 @@ Begin now:
             old_source_num = int(old_label.split()[-1])
             old_to_new_ref_num[old_source_num] = new_num
         
-        verified_answer = post_process_citations(answer, source_references, old_to_new_ref_num)
+        verified_answer, citation_stats = post_process_citations(answer, source_references, old_to_new_ref_num)
         verified_answer = clean_final_answer(verified_answer, old_to_new_ref_num)
+        if diagnostics is not None:
+            diagnostics["citation_cleanup_count"] = citation_stats.get("placeholder_removed", 0) + citation_stats.get("invalid", 0)
+            diagnostics["grounding_validation"] = {
+                "replaced": citation_stats.get("replaced", 0),
+                "invalid": citation_stats.get("invalid", 0),
+                "placeholder_removed": citation_stats.get("placeholder_removed", 0),
+            }
         
         references_section = "\n\nREFERENCES\n"
         for new_num, (old_label, info) in enumerate(sorted_refs, 1):
@@ -570,23 +526,24 @@ Begin now:
 
 def post_process_citations(answer, source_references, old_to_new_ref_num):
     """Replace internal citations with clean academic format and validate grounding.
-    
+
     Converts [Source X, Chunk Y], (Source X, Chunk Y), and inline Source X citations
-    to clean [N] format. Removes any invalid or unsupported internal labels.
-    
+    to clean [N] format. Removes placeholders and invalid citations.
+
     Args:
         answer: The raw answer text with internal citations
         source_references: Dict mapping old labels (Source N) to paper metadata
         old_to_new_ref_num: Dict mapping old source numbers to new sequential [N] numbers
-    
+
     Returns:
-        Processed answer text with clean academic citation format [N]
+        Tuple of processed answer text and citation stats
     """
     import re
-    
+
+    answer, placeholder_removed = remove_placeholder_citations(answer)
     lines = answer.split('\n')
     processed_lines = []
-    citation_stats = {'replaced': 0, 'invalid': 0, 'removed': 0}
+    citation_stats = {'replaced': 0, 'invalid': 0, 'removed': 0, 'placeholder_removed': placeholder_removed}
     
     # Extract valid source numbers
     valid_source_nums = set(old_to_new_ref_num.keys())
@@ -630,5 +587,7 @@ def post_process_citations(answer, source_references, old_to_new_ref_num):
     if citation_stats['invalid'] > 0:
         print(f"⚠ Citation cleanup: {total_removed} invalid citations removed")
     
-    return '\n'.join(processed_lines)
+    cleaned_answer = '\n'.join(processed_lines)
+    cleaned_answer = validate_inline_author_year_mentions(cleaned_answer, source_references)
+    return cleaned_answer, citation_stats
 

@@ -1,10 +1,21 @@
-from sentence_transformers import CrossEncoder
 from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Tuple, Set
 import re
 
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+reranker = None
+
+
+def _initialize_reranker():
+    global reranker
+    if reranker is not None:
+        return reranker
+    try:
+        from sentence_transformers import CrossEncoder
+        reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+    except Exception:
+        reranker = None
+    return reranker
 
 
 def retrieve_for_focus(vector_store, focus_term: str, k: int = 15) -> List:
@@ -164,10 +175,13 @@ def rerank_with_focus_awareness(query: str, docs: List, focus_terms: List[str] =
     """
     if not docs:
         return []
-    
-    # Get base relevance scores from CrossEncoder
+
+    reranker_instance = _initialize_reranker()
+    if reranker_instance is None:
+        return docs
+
     passages = [doc.page_content for doc in docs]
-    relevance_scores = reranker.predict([(query, passage) for passage in passages])
+    relevance_scores = reranker_instance.predict([(query, passage) for passage in passages])
     
     # Add focus-aware adjustments if focus terms provided
     adjusted_scores = list(relevance_scores)
@@ -208,23 +222,23 @@ def retrieve_chunks(vector_store, query, query_intent: Optional[Dict] = None):
     
     # Adjust k based on query type
     if query_type == "survey":
-        k = 50  # Retrieve more candidates for broader coverage
+        k = 32  # Retrieve enough candidates for broad coverage while staying under 30 final docs
     elif query_type == "comparison":
-        k = 45  # Retrieve more candidates for both comparison sides
+        k = 28  # Narrow candidate pool to reduce reranker load on local hardware
     else:
-        k = 35  # Default
-    
+        k = 24  # Default
+
     # Step 1 — retrieve a broad candidate pool from FAISS:
     base_docs = vector_store.similarity_search(query, k=k)
 
     # Step 2 — build separate focus retrievals for survey/comparison queries
     if query_type in {"comparison", "survey"} and focus_terms:
         focus_retrievals = {
-            term: retrieve_for_focus(vector_store, term, k=min(15, k))
+            term: retrieve_for_focus(vector_store, term, k=min(10, k))
             for term in focus_terms
         }
-        focus_docs = merge_and_deduplicate_focused(focus_retrievals, max_per_focus=4)
-        focus_docs = boost_underrepresented_focus(vector_store, focus_docs, focus_terms, coverage_threshold=2, additional_k=5)
+        focus_docs = merge_and_deduplicate_focused(focus_retrievals, max_per_focus=2)
+        focus_docs = boost_underrepresented_focus(vector_store, focus_docs, focus_terms, coverage_threshold=1, additional_k=4)
 
         # Keep the focused docs first, but preserve relevance by appending base retrieval results
         candidate_docs = []
@@ -242,17 +256,18 @@ def retrieve_chunks(vector_store, query, query_intent: Optional[Dict] = None):
     else:
         candidate_docs = base_docs
 
+    # Keep local candidate pool bounded for efficient reranking
+    candidate_docs = candidate_docs[:30]
+
     # Step 3 — optionally prioritize challenge-related content
     if query_type == "challenges" and focus_terms:
         candidate_docs = _prioritize_for_focus_terms(candidate_docs, focus_terms, priority="limitations")
 
     # Step 4 — rerank candidates with focus awareness for coverage and relevance
     if query_type in {"comparison", "survey"} and focus_terms:
-        candidate_docs = rerank_with_focus_awareness(query, candidate_docs, focus_terms)
+        candidate_docs = rerank_with_focus_awareness(query, candidate_docs[:25], focus_terms)
     else:
-        candidate_docs = rerank(query, candidate_docs)
-
-    # Step 5 — group candidates by source paper ID:
+        candidate_docs = rerank(query, candidate_docs[:25])
     grouped = defaultdict(list)
     for doc in candidate_docs:
         source_id = doc.metadata.get("paper_id", "unknown")
@@ -297,27 +312,36 @@ def retrieve_chunks(vector_store, query, query_intent: Optional[Dict] = None):
             reason_counts[reason] += 1
         print(f"  Filtering diagnostics: {dict(reason_counts)}")
 
-    return final_docs
+    metrics = {
+        "candidate_chunk_count": len(candidate_docs),
+        "final_chunk_count": len(final_docs),
+        "candidate_source_count": len(candidate_sources),
+        "final_source_count": len(source_ids),
+        "focus_coverage": coverage,
+        "candidate_coverage": candidate_coverage,
+    }
+
+    return final_docs, metrics
 
 
 def _get_chunks_per_source(query_type: str) -> int:
     """Determine how many chunks to keep per source based on query type."""
     if query_type == "survey":
-        return 4  # Allow multiple useful chunks from the same source
+        return 3  # Prevent one source from dominating broad coverage
     elif query_type == "comparison":
-        return 5  # Allow strong papers to contribute broader evidence
+        return 4  # Allow stronger comparative evidence without excessive dominance
     else:
-        return 5  # Default
+        return 3  # Default
 
 
 def _get_final_k(query_type: str) -> int:
     """Determine final number of chunks to return based on query type."""
     if query_type == "survey":
-        return 9  # More coverage for broad queries
+        return 7  # More coverage for broad queries
     elif query_type == "comparison":
-        return 9  # Better coverage of both comparison sides
+        return 6  # Better coverage with lower runtime
     else:
-        return 7  # Default
+        return 5  # Default
 
 
 def _interleave_by_source(grouped: Dict[str, List], chunks_per_source: int) -> List:
@@ -349,7 +373,19 @@ def _choose_diverse_docs(docs: List, final_k: int, max_per_source: int, query_ty
             else:
                 diagnostics.append(("missing_side", side))
 
-    # 2. Add top relevant documents while allowing multiple chunks from strong sources
+    # 2. Ensure source diversity when enough unique papers are available
+    if query_type in {"comparison", "survey"}:
+        unique_sources = {doc.metadata.get("paper_id", "unknown") for doc in docs}
+        min_source_target = min(len(unique_sources), max(3, min(4, final_k)))
+        for doc in docs:
+            if len(selected) >= final_k or len(source_counts) >= min_source_target:
+                break
+            source_id = doc.metadata.get("paper_id", "unknown")
+            if source_counts[source_id] == 0:
+                selected.append(doc)
+                source_counts[source_id] += 1
+
+    # 3. Add top relevant documents while allowing multiple chunks from strong sources
     for doc in docs:
         if len(selected) >= final_k:
             break
@@ -365,13 +401,13 @@ def _choose_diverse_docs(docs: List, final_k: int, max_per_source: int, query_ty
         else:
             diagnostics.append(("source_cap", doc))
 
-    # 3. If still under target, add more top docs even if source caps have been reached
+    # 4. If still under target, add more top docs even if source caps have been reached
     for doc in docs:
         if len(selected) >= final_k:
             break
         if doc in selected:
             continue
-        if _is_near_duplicate(doc, selected, threshold=0.95):
+        if _is_near_duplicate(doc, selected, threshold=0.96):
             diagnostics.append(("duplicate_fallback", doc))
             continue
         selected.append(doc)
@@ -588,7 +624,12 @@ def _prioritize_for_focus_terms(docs: List, focus_terms: List[str], priority: st
 def rerank(query, docs):
     if not docs:
         return []
+
+    reranker_instance = _initialize_reranker()
+    if reranker_instance is None:
+        return docs
+
     passages = [doc.page_content for doc in docs]
-    rerank_scores = reranker.predict([(query, passage) for passage in passages])
+    rerank_scores = reranker_instance.predict([(query, passage) for passage in passages])
     reranked = sorted(zip(docs, rerank_scores), key=lambda x: x[1], reverse=True)
     return [doc for doc, _ in reranked]

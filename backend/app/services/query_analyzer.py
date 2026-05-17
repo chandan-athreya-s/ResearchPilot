@@ -49,159 +49,170 @@ class QueryAnalyzer:
         "this", "that", "these", "those", "i", "you", "he", "she", "it",
         "we", "they", "what", "which", "who", "when", "where", "why", "how"
     }
+
+    NORMALIZATION_MAP = {
+        "rag": "retrieval augmented generation",
+        "retrieval augmented generation": "retrieval augmented generation",
+        "fine tuning": "fine tuning",
+        "fine-tuning": "fine tuning",
+        "fine tune": "fine tuning",
+        "llm": "large language model",
+        "large language model": "large language model",
+        "large language models": "large language model",
+        "agentic workflows": "agentic workflows",
+        "agentic workflow": "agentic workflows",
+        "autonomous agents": "agentic workflows",
+        "enterprise knowledge systems": "enterprise knowledge systems",
+        "enterprise ai systems": "enterprise knowledge systems",
+        "knowledge management systems": "enterprise knowledge systems",
+    }
     
+    @staticmethod
+    def _matches_any_pattern(query: str, patterns: List[str]) -> bool:
+        return any(re.search(pattern, query) for pattern in patterns)
+
+    @staticmethod
+    def _is_comparison_query(query: str) -> bool:
+        comparison_patterns = [
+            r"\bcomparison(?:\s+of|\s+between)?\b",
+            r"\bcompare\b",
+            r"\bvs\b",
+            r"\bversus\b",
+            r"\bdifferences?\s+between\b",
+            r"\bcompared\s+(?:to|with)\b",
+        ]
+        return QueryAnalyzer._matches_any_pattern(query, comparison_patterns)
+
+    @staticmethod
+    def _is_implementation_query(query: str) -> bool:
+        return any(keyword in query for keyword in QueryAnalyzer.IMPLEMENTATION_KEYWORDS)
+
+    @staticmethod
+    def _is_challenges_query(query: str) -> bool:
+        return any(keyword in query for keyword in QueryAnalyzer.CHALLENGES_KEYWORDS)
+
+    @staticmethod
+    def _is_survey_query(query: str) -> bool:
+        survey_patterns = [
+            r"\bsurvey\b",
+            r"\breview\b",
+            r"\boverview\b",
+            r"\bstate of the art\b",
+            r"\blandscape\b",
+            r"\bsystematic\b",
+            r"\bcomprehensive\b",
+            r"\btaxonomy\b",
+            r"\bclassification\b",
+        ]
+        if QueryAnalyzer._matches_any_pattern(query, survey_patterns):
+            return True
+
+        if re.search(r"\b(recent|latest)\s+papers?\b", query):
+            return False
+
+        broader_survey_terms = [
+            'overview', 'landscape', 'state', 'advances',
+            'developments', 'trends', 'literature'
+        ]
+        if any(term in query for term in broader_survey_terms):
+            if not QueryAnalyzer._matches_any_pattern(query, list(QueryAnalyzer.CHALLENGES_KEYWORDS)):
+                return True
+
+        return False
+
     @staticmethod
     def detect_query_type(query: str) -> str:
         """Detect the primary intent type of the query.
-        
-        Enhanced heuristics:
-        - "<topic> for <domain>" patterns → survey/research overview
-        - Better comparison keyword detection
-        - More nuanced scoring based on context
-        
-        Args:
-            query: The research query string
-            
-        Returns:
-            One of: "comparison", "survey", "implementation", "challenges", "general"
+
+        Priority order:
+        1. comparison
+        2. implementation
+        3. challenges
+        4. survey
+        5. general
         """
         query_lower = query.lower()
-        
-        # Initialize scores
-        type_scores = {
-            "comparison": 0,
-            "survey": 0,
-            "implementation": 0,
-            "challenges": 0
-        }
-        
-        # Count keyword matches for each type
-        for keyword in QueryAnalyzer.COMPARISON_KEYWORDS:
-            if keyword in query_lower:
-                type_scores["comparison"] += 1
-                
-        for keyword in QueryAnalyzer.SURVEY_KEYWORDS:
-            if keyword in query_lower:
-                type_scores["survey"] += 1
-                
-        for keyword in QueryAnalyzer.IMPLEMENTATION_KEYWORDS:
-            if keyword in query_lower:
-                type_scores["implementation"] += 1
-                
-        for keyword in QueryAnalyzer.CHALLENGES_KEYWORDS:
-            if keyword in query_lower:
-                type_scores["challenges"] += 1
-        
-        # ENHANCED HEURISTICS
-        
-        # 1. "<topic> for <domain>" patterns → survey/research overview
-        # Examples: "reinforcement learning for robotics", "machine learning for healthcare"
-        # Must have complete pattern: word + for/in/applied to/within + word
-        # AND avoid triggering on questions like "why does X occur in Y"
-        for_pattern = re.search(r'\b\w+\s+(?:for|in|applied\s+to|within)\s+\w+', query_lower)
-        if for_pattern and len(for_pattern.group().split()) >= 3:  # Ensure complete pattern
-            # Additional check: avoid triggering on questions (why/what/how/when/where at start)
-            if not query_lower.startswith(('why ', 'what ', 'how ', 'when ', 'where ')):
-                type_scores["survey"] += 2  # Strong boost for survey behavior
-        
-        # 2. Comparison patterns with "vs", "versus", or "compared to"
-        if re.search(r'\b(?:vs|versus|compared\s+to|vs\.)\b', query_lower):
-            type_scores["comparison"] += 2
-        
-        # 3. Trade-off analysis patterns
-        if re.search(r'\b(?:trade.?off|trade.?offs|pros\s+and\s+cons|advantages?\s+and\s+disadvantages?)\b', query_lower):
-            type_scores["comparison"] += 2
-        
-        # 4. Implementation-focused question starters
-        if query_lower.startswith(('how to', 'how do', 'how can', 'implementing', 'building')):
-            type_scores["implementation"] += 2
-        
-        # 5. Challenge/problem-focused question starters
-        # Only boost if followed by actual challenge/problem keywords
-        if query_lower.startswith(('what are the', 'what is the', 'why does', 'why do')):
-            challenge_followers = ['problem', 'challenge', 'issue', 'limitation', 'difficulty', 'barrier', 'error', 'failure', 'occur', 'happen', 'cause']
-            if any(word in query_lower for word in challenge_followers):
-                type_scores["challenges"] += 2
-        
-        # 6. Survey patterns with broad scope indicators
-        broad_scope_words = ['overview', 'landscape', 'state', 'current', 'recent', 'advances', 'developments', 'trends']
-        if any(word in query_lower for word in broad_scope_words):
-            type_scores["survey"] += 1
-        
-        # 7. Implementation patterns with practical indicators
-        practical_words = ['practical', 'real-world', 'production', 'deploy', 'scale', 'efficient']
-        if any(word in query_lower for word in practical_words):
-            type_scores["implementation"] += 1
-        
-        # Return the type with highest score, default to "general"
-        if max(type_scores.values()) > 0:
-            return max(type_scores, key=type_scores.get)
+
+        if QueryAnalyzer._is_comparison_query(query_lower):
+            return "comparison"
+        if QueryAnalyzer._is_survey_query(query_lower):
+            return "survey"
+        if QueryAnalyzer._is_implementation_query(query_lower):
+            return "implementation"
+        if QueryAnalyzer._is_challenges_query(query_lower):
+            return "challenges"
         return "general"
     
     @staticmethod
+    def _normalize_entity(entity: str) -> str:
+        entity = entity.strip().lower()
+        entity = re.sub(r'\s+', ' ', entity)
+        if entity in QueryAnalyzer.NORMALIZATION_MAP:
+            return QueryAnalyzer.NORMALIZATION_MAP[entity]
+        return entity
+
+    def _split_known_aliases(entity: str) -> List[str]:
+        entity = entity.strip().lower()
+        found = []
+        remaining = entity
+        for alias in sorted(QueryAnalyzer.NORMALIZATION_MAP.keys(), key=len, reverse=True):
+            pattern = rf"\b{re.escape(alias)}\b"
+            while re.search(pattern, remaining):
+                found.append(QueryAnalyzer.NORMALIZATION_MAP[alias])
+                remaining = re.sub(pattern, ' ', remaining, count=1)
+        remaining = re.sub(r'\s+', ' ', remaining).strip()
+        if remaining and len(remaining.split()) > 1:
+            found.append(remaining)
+        return found if found else [entity]
+
     def extract_focus_terms(query: str, max_terms: int = 5) -> List[str]:
-        """Extract important focus terms (2+ word noun phrases) from query.
-        
-        Strategy:
-        1. Split into tokens and normalize
-        2. Find noun phrases (sequences of non-stop words)
-        3. Prefer multi-word phrases over single words
-        4. Return top N by frequency/position
-        
-        Args:
-            query: The research query string
-            max_terms: Maximum number of focus terms to extract (default: 5)
-            
-        Returns:
-            List of extracted focus terms, ordered by importance
-        """
-        # Normalize and tokenize
+        """Extract important focus terms and normalized entities from query."""
         query_lower = query.lower()
-        # Remove punctuation but keep spaces
-        query_clean = re.sub(r'[^\w\s]', ' ', query_lower)
-        tokens = query_clean.split()
-        
-        # Find noun phrases (consecutive non-stop words)
+        query_clean = re.sub(r'[\-\/]', ' ', query_lower)
+        query_clean = re.sub(r'[^\w\s]', ' ', query_clean)
+        query_clean = re.sub(r'\s+', ' ', query_clean).strip()
+
+        # Capture trailing context phrases from "for" / "in" / "using"
+        tail_match = re.search(r'\b(?:for|in|within|using|across)\s+(.+)$', query_clean)
+        tail_phrase = tail_match.group(1).strip() if tail_match else ""
+
+        # Split into meaningful segments and conjunctive chunks
+        separators = re.split(r"\s*(?:,|;|\band\b|\bor\b|\bversus\b|\bvs\.?\b|\bwith\b|\bfor\b|\bin\b|\busing\b|\bwithin\b)\s*", query_clean)
         phrases = []
-        current_phrase = []
-        
-        for token in tokens:
-            if token not in QueryAnalyzer.STOP_WORDS and len(token) > 2:
-                current_phrase.append(token)
-            else:
-                if len(current_phrase) >= 2:
-                    # Multi-word phrase
-                    phrase = " ".join(current_phrase)
-                    phrases.append(phrase)
-                elif len(current_phrase) == 1:
-                    # Single word - keep for fallback but lower priority
-                    phrases.append(current_phrase[0])
-                current_phrase = []
-        
-        # Don't forget last phrase
-        if len(current_phrase) >= 2:
-            phrase = " ".join(current_phrase)
-            phrases.append(phrase)
-        elif len(current_phrase) == 1:
-            phrases.append(current_phrase[0])
-        
-        # Remove duplicates while preserving order (prioritize first occurrence)
+        for segment in separators:
+            segment = segment.strip()
+            if not segment:
+                continue
+            cleaned = re.sub(r'\b(?:the|a|an|of|to|for|in|with|using|on|at|by|from|within|this|that|these|those)\b', ' ', segment)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            if not cleaned:
+                continue
+            phrases.append(cleaned)
+
+        if tail_phrase and tail_phrase not in phrases:
+            phrases.append(tail_phrase)
+
+        normalized_phrases = []
         seen = set()
-        unique_phrases = []
         for phrase in phrases:
-            if phrase not in seen:
-                seen.add(phrase)
-                unique_phrases.append(phrase)
-        
-        # Prioritize multi-word phrases, then return top N
-        multi_word = [p for p in unique_phrases if " " in p]
-        single_word = [p for p in unique_phrases if " " not in p]
-        
-        # Return multi-word first, fill with single words if needed
-        result = multi_word[:max_terms]
-        if len(result) < max_terms:
-            result.extend(single_word[:max_terms - len(result)])
-        
+            expanded = QueryAnalyzer._split_known_aliases(phrase)
+            for normalized in expanded:
+                normalized = QueryAnalyzer._normalize_entity(normalized)
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    normalized_phrases.append(normalized)
+
+        multi_word = [p for p in normalized_phrases if ' ' in p]
+        single_word = [p for p in normalized_phrases if ' ' not in p]
+
+        result = []
+        for phrase in multi_word:
+            if len(result) < max_terms:
+                result.append(phrase)
+        for phrase in single_word:
+            if len(result) < max_terms:
+                result.append(phrase)
+
         return result[:max_terms]
     
     @staticmethod
@@ -258,15 +269,21 @@ def extract_comparison_pairs(query: str) -> List[Tuple[str, str]]:
                 right = match.group(2).strip()
             
             # Clean extracted terms
-            left = re.sub(r"^(the|a|an)\s+", "", left)
-            right = re.sub(r"^(the|a|an)\s+", "", right)
-            left = re.sub(r"\s+(in|for|on|to)\s+.*$", "", left)
-            right = re.sub(r"\s+(in|for|on|to)\s+.*$", "", right)
+            left = _normalize_comparison_side(left)
+            right = _normalize_comparison_side(right)
             
             if left and right and len(left) > 2 and len(right) > 2:
                 pairs.append((left, right))
     
     return pairs
+
+
+def _normalize_comparison_side(side: str) -> str:
+    side = side.strip()
+    side = re.sub(r'^(the|a|an)\s+', '', side)
+    side = re.sub(r'\s+(?:for|in|on|to|using|with)\s+.*$', '', side)
+    side = re.sub(r'[,:;.?]+.*$', '', side)
+    return side.strip()
 
 
 def analyze_query(query: str) -> Dict:

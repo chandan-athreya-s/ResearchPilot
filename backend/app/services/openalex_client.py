@@ -1,6 +1,8 @@
 import requests
 import re
 
+from app.services.query_analyzer import analyze_query
+
 BASE_URL = "https://api.openalex.org/works"
 
 
@@ -38,9 +40,24 @@ def reconstruct_abstract(inverted_index):
     return " ".join(ordered_words)
 
 
+def build_search_query(query: str) -> str:
+    analysis = analyze_query(query)
+    focus_terms = analysis.get("focus_terms", [])
+    comparison_terms = [term for pair in analysis.get("comparison_pairs", []) for term in pair]
+    normalized_terms = []
+    for term in focus_terms + comparison_terms:
+        term = term.strip()
+        if term and term not in normalized_terms:
+            normalized_terms.append(term)
+
+    additional_tokens = " ".join(normalized_terms)
+    expanded_query = f"{query} {additional_tokens}".strip()
+    return re.sub(r"\s+", " ", expanded_query)
+
+
 def fetch_papers(query, max_results=8):
     params = {
-        "search": query,
+        "search": build_search_query(query),
         "per-page": max_results,
         "filter": "is_oa:true,concepts.id:C41008148"
     }
