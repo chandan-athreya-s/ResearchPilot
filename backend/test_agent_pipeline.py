@@ -8,6 +8,7 @@ sys.path.insert(0, str(workspace_root))
 
 from app.agents.acquisition_agent import AcquisitionAgent
 from app.agents.compression_agent import CompressionAgent
+from app.agents.evidence_extractor_agent import EvidenceExtractorAgent
 from app.agents.query_agent import QueryAgent
 from app.agents.query_expansion_agent import QueryExpansionAgent
 from app.agents.relevance_verifier_agent import RelevanceVerifierAgent
@@ -115,6 +116,14 @@ class TestAgentPipeline(unittest.TestCase):
             state = RetrieverAgent().run(state)
             self.assertTrue(state.retrieved_chunks)
             self.assertEqual(state.diagnostics["retrieved_chunk_count"], 1)
+
+            state = CompressionAgent().run(state)
+            self.assertTrue(state.retrieved_chunks)
+            self.assertTrue(state.diagnostics["compressed_chunk_count"] >= 0)
+
+            state = EvidenceExtractorAgent().run(state)
+            self.assertTrue(state.evidence_objects)
+            self.assertEqual(state.diagnostics["evidence_objects_created"], len(state.evidence_objects))
 
             state = ReasoningAgent().run(state)
             self.assertEqual(state.generated_answer, "FINAL ANSWER")

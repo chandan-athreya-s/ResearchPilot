@@ -21,7 +21,7 @@ class ReasoningAgent(BaseAgent):
 
             answer = generate_answer(
                 state.query,
-                state.retrieved_chunks,
+                state.evidence_objects,
                 state.filtered_papers,
                 state.metadata_store,
                 state.papers_with_extracted_text,

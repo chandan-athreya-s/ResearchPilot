@@ -1,5 +1,6 @@
 from app.agents.acquisition_agent import AcquisitionAgent
 from app.agents.compression_agent import CompressionAgent
+from app.agents.evidence_extractor_agent import EvidenceExtractorAgent
 from app.agents.query_agent import QueryAgent
 from app.agents.query_expansion_agent import QueryExpansionAgent
 from app.agents.relevance_verifier_agent import RelevanceVerifierAgent
@@ -20,6 +21,7 @@ def run_pipeline(query: str) -> str:
         AcquisitionAgent(),
         RetrieverAgent(),
         CompressionAgent(),
+        EvidenceExtractorAgent(),
         ReasoningAgent(),
     ]
 

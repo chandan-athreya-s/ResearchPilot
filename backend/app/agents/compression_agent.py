@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.agents.base_agent import BaseAgent
 from app.core.state import ResearchState
@@ -61,7 +61,7 @@ def _split_sentences(text: str) -> List[str]:
     return sentences
 
 
-def _sentence_score(sentence: str) -> int:
+def _sentence_score(sentence: str, query: Optional[str] = None) -> int:
     score = 0
     normalized = sentence.lower()
     keyword_hits = sum(1 for keyword in KEYWORD_PRIORITY if keyword in normalized)
@@ -76,6 +76,13 @@ def _sentence_score(sentence: str) -> int:
         score += 1
     if keyword_hits > 3:
         score += 2
+    if query:
+        query_tokens = set(_normalize_text(query).split())
+        sentence_tokens = set(_normalize_text(sentence).split())
+        if query_tokens & sentence_tokens:
+            score += 3
+        if _normalize_text(query) in _normalize_text(sentence):
+            score += 4
     return score
 
 
@@ -107,7 +114,7 @@ def deduplicate_chunks(chunks: List[Any], threshold: float = 0.92) -> List[Any]:
     return unique
 
 
-def compress_chunk(chunk: Any, target_tokens: int = MAX_TARGET_TOKENS) -> Any:
+def compress_chunk(chunk: Any, target_tokens: int = MAX_TARGET_TOKENS, query: str = "") -> Any:
     """Compress a single chunk with heuristic sentence selection."""
     if not getattr(chunk, "page_content", None):
         return chunk
@@ -130,7 +137,7 @@ def compress_chunk(chunk: Any, target_tokens: int = MAX_TARGET_TOKENS) -> Any:
 
     scored = []
     for idx, sentence in enumerate(deduped):
-        score = _sentence_score(sentence)
+        score = _sentence_score(sentence, query=query)
         scored.append((sentence, score, idx))
 
     scored.sort(key=lambda item: (item[1], -item[2]), reverse=True)
@@ -172,7 +179,7 @@ def compress_chunk(chunk: Any, target_tokens: int = MAX_TARGET_TOKENS) -> Any:
     return chunk
 
 
-def compress_context(chunks: List[Any], target_tokens: int = MAX_TARGET_TOKENS) -> Tuple[List[Any], Dict[str, Any]]:
+def compress_context(chunks: List[Any], target_tokens: int = MAX_TARGET_TOKENS, query: str = "") -> Tuple[List[Any], Dict[str, Any]]:
     """Compress and deduplicate retrieved chunks before reasoning."""
     if not chunks:
         return [], {
@@ -191,7 +198,7 @@ def compress_context(chunks: List[Any], target_tokens: int = MAX_TARGET_TOKENS) 
     for chunk in chunks:
         original_tokens = estimate_token_count(chunk.page_content)
         total_original_tokens += original_tokens
-        compressed = compress_chunk(chunk, target_tokens=target_tokens)
+        compressed = compress_chunk(chunk, target_tokens=target_tokens, query=query)
         compressed_tokens = estimate_token_count(compressed.page_content)
         total_compressed_tokens += compressed_tokens
         compressed_chunks.append(compressed)
@@ -224,7 +231,7 @@ class CompressionAgent(BaseAgent):
                 self._log("No retrieved chunks available for compression.")
                 return state
 
-            compressed_chunks, stats = compress_context(state.retrieved_chunks)
+            compressed_chunks, stats = compress_context(state.retrieved_chunks, query=state.query)
             state.retrieved_chunks = compressed_chunks
             state.diagnostics["compression_ratio"] = stats["compression_ratio"]
             state.diagnostics["compressed_chunk_count"] = stats["compressed_chunk_count"]

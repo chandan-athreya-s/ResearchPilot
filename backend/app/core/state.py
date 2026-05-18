@@ -40,8 +40,18 @@ class ResearchState:
         "citation_cleanup_count": 0,
         "expanded_queries": [],
         "retrieval_source_counts": {},
+        "disabled_sources": [],
+        "source_health": {},
+        "rate_limit_events": 0,
+        "evidence_objects_created": 0,
+        "extracted_metrics_count": 0,
+        "extracted_findings_count": 0,
+        "extracted_tradeoffs_count": 0,
+        "evidence_coverage": {},
+        "evidence_diversity": {},
     })
     errors: List[str] = field(default_factory=list)
     papers_with_extracted_text: Set[str] = field(default_factory=set)
     filtered_papers: List[Dict[str, Any]] = field(default_factory=list)
+    evidence_objects: List[Any] = field(default_factory=list)
     expanded_queries: List[str] = field(default_factory=list)

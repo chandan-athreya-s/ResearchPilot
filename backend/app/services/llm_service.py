@@ -285,243 +285,197 @@ def compress_context_chunks(docs, max_chars: int = 1200):
     return docs
 
 
-def generate_answer(query, docs, papers, metadata_store, papers_with_extracted_text, query_intent: dict = None, diagnostics: dict = None):
-    """Generate an answer based on retrieved documents with proper source tracking.
-    
-    Args:
-        query: The research query
-        docs: Retrieved chunks with metadata
-        papers: Filtered papers with extracted text
-        metadata_store: Original OpenAlex metadata keyed by paper_id (source of truth)
-        papers_with_extracted_text: Set of paper_ids that have extracted text
-        query_intent: Optional dict with query_type, focus_terms, comparison_pairs
-    """
+def _format_evidence_objects_for_prompt(evidence_objects, query_intent: dict = None) -> str:
+    if not evidence_objects:
+        return ""
+
+    lines = ["STRUCTURED EVIDENCE OBJECTS:"]
+    for idx, evidence in enumerate(evidence_objects, start=1):
+        lines.append(f"Evidence {idx}:")
+        lines.append(f"Paper: {evidence.paper_title} ({evidence.year if evidence.year else 'unknown'})")
+        if evidence.authors:
+            lines.append(f"Authors: {', '.join(evidence.authors)}")
+        source_ref = evidence.source_reference.get("url") or evidence.source_reference.get("doi") or evidence.paper_id
+        lines.append(f"Source reference: {source_ref}")
+        if evidence.rank_score:
+            lines.append(f"Rank score: {round(evidence.rank_score, 2)}")
+        if evidence.method:
+            lines.append(f"Methodology: {evidence.method}")
+        if evidence.dataset_name:
+            lines.append(f"Dataset: {evidence.dataset_name}")
+        if evidence.benchmark_name:
+            lines.append(f"Benchmark: {evidence.benchmark_name}")
+        if evidence.metrics:
+            lines.append(f"Metrics: {'; '.join(evidence.metrics)}")
+        if evidence.metric_names and evidence.metric_values:
+            metric_pairs = [f"{name}: {value}" for name, value in zip(evidence.metric_names, evidence.metric_values)]
+            lines.append(f"Quantitative metrics: {'; '.join(metric_pairs)}")
+        if evidence.findings:
+            lines.append(f"Findings: {'; '.join(evidence.findings)}")
+        if evidence.quantitative_findings:
+            lines.append(f"Quantitative findings: {'; '.join(evidence.quantitative_findings)}")
+        if evidence.latency:
+            lines.append(f"Latency: {evidence.latency}")
+        if evidence.memory_cost:
+            lines.append(f"Memory / cost: {evidence.memory_cost}")
+        if evidence.computational_cost:
+            lines.append(f"Compute / cost: {evidence.computational_cost}")
+        if evidence.scalability_notes:
+            lines.append(f"Scalability notes: {evidence.scalability_notes}")
+        if evidence.tradeoffs:
+            lines.append(f"Tradeoffs: {'; '.join(evidence.tradeoffs)}")
+        if evidence.limitations:
+            lines.append(f"Limitations: {'; '.join(evidence.limitations)}")
+        if evidence.relevance_to_query:
+            lines.append(f"Relevance: {evidence.relevance_to_query}")
+        if evidence.extracted_text:
+            lines.append(f"Extracted text: {evidence.extracted_text}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _build_query_structure(query_type: str) -> str:
+    if query_type == "comparison":
+        return (
+            "1. EXECUTIVE SUMMARY: Key technical distinctions and strongest evidence-backed difference.\n"
+            "2. METHODOLOGIES: Compare algorithmic and architectural choices.\n"
+            "3. PERFORMANCE & BENCHMARK ANALYSIS: Compare metrics, dataset results, and benchmark behavior.\n"
+            "4. TRADEOFFS & SCALABILITY: Compare computational cost, memory, latency, and operational tradeoffs.\n"
+            "5. LIMITATIONS & GAPS: Identify weaknesses, bottlenecks, and unresolved issues.\n"
+            "6. COVERAGE: Ensure all major query entities are represented.\n"
+            "7. CONCLUSION: Evidence-grounded recommendation with no unsupported claims."
+        )
+    if query_type == "survey":
+        return (
+            "1. EXECUTIVE SUMMARY: What the evidence says about the topic.\n"
+            "2. METHODS & TRENDS: Summarize methodologies and emerging patterns.\n"
+            "3. DATASETS & BENCHMARKS: Highlight the most common evaluation settings.\n"
+            "4. FINDINGS: Key results supported by extracted metrics.\n"
+            "5. LIMITATIONS: Main constraints and research gaps.\n"
+            "6. CONCLUSION: Evidence-grounded survey synopsis."
+        )
+    if query_type == "challenges":
+        return (
+            "1. EXECUTIVE SUMMARY: Main challenge areas and evidence-backed concerns.\n"
+            "2. LIMITATIONS & BOTTLENECKS: List observed weaknesses and performance obstacles.\n"
+            "3. SCALABILITY & COMPUTATIONAL CONCERNS: Highlight costs, overhead, and failure modes.\n"
+            "4. TRADEOFFS: Identify key compromises and risks.\n"
+            "5. OPEN PROBLEMS: Where evidence reports remaining gaps.\n"
+            "6. CONCLUSION: Grounded risk assessment and future directions."
+        )
+    return (
+        "1. EXECUTIVE SUMMARY: Scope and significance of the evidence.\n"
+        "2. METHODS & APPROACHES: Technical design and implementation observations.\n"
+        "3. FINDINGS: Strong evidence-backed outcomes.\n"
+        "4. LIMITATIONS: Noted weaknesses and caveats.\n"
+        "5. FUTURE DIRECTIONS: Likely next steps indicated by the evidence.\n"
+        "6. CONCLUSION: Summary grounded in extracted evidence."
+    )
+
+
+def _build_source_references(evidence_objects, metadata_store, papers_with_extracted_text):
+    source_references = {}
+    paper_order = []
+    for evidence in evidence_objects:
+        paper_id = evidence.paper_id
+        if paper_id in source_references or paper_id not in papers_with_extracted_text:
+            continue
+        source_references[paper_id] = metadata_store.get(paper_id, {"paper_id": paper_id})
+        paper_order.append(paper_id)
+    return source_references, paper_order
+
+
+def generate_structured_evidence_prompt(query, evidence_objects, query_intent: dict = None):
     if query_intent is None:
         query_intent = {"query_type": "general", "focus_terms": [], "comparison_pairs": []}
-    
-    # Detect if this is a comparison query
-    is_comparison_query = query_intent.get("query_type") == "comparison"
-    
-    # For comparison queries, use specialized evidence scaffolding
-    if is_comparison_query:
-        docs = compress_context_chunks(docs)
-        aspect_groups = scaffold_evidence_for_comparison(docs, query_intent)
-        comparison_pairs = query_intent.get("comparison_pairs", [])
-        prompt = generate_comparison_aware_prompt(query, docs, aspect_groups, comparison_pairs)
-    else:
-        # Original logic for non-comparison queries
-        context_parts = []
-        source_references = {}  # Track unique sources
-        source_to_label = {}   # Map paper_id to labels
-        label_counter = 1
-        
-        # Bug 2 fix: Deduplicate paper IDs that should be skipped to prevent duplicate guard logs
-        phantom_refs_logged = set()
-        
-        # Process documents and create context with labels
-        docs = compress_context_chunks(docs)
-        for doc in docs:
-            paper_id = doc.metadata.get("paper_id", "unknown")  # Safe access with fallback
-            chunk_index = doc.metadata.get("chunk_index", 0)
-            content = doc.page_content
-            
-            # Only include papers that have extracted text (Bug 2 fix: log phantom refs only once)
-            if paper_id not in papers_with_extracted_text:
-                if paper_id not in phantom_refs_logged:
-                    print(f"⚠ Skipping phantom reference for {paper_id}")
-                    phantom_refs_logged.add(paper_id)
-                continue
-            
-            # Assign label if not already assigned
-            if paper_id not in source_to_label:
-                label = f"Source {label_counter}"
-                source_to_label[paper_id] = label
-                # Bug 2 fix: Always use full OpenAlex metadata as source of truth
-                original_meta = metadata_store.get(paper_id, {})
-                source_references[label] = original_meta
-                label_counter += 1
-            
-            label = source_to_label[paper_id]
-            context_parts.append(f"[{label}, Chunk {chunk_index}]\n{content}")
-        
-        formatted_chunks = "\n\n".join(context_parts)
-        
-        # Debug: Print source diversity
-        source_ids = sorted(set(source_to_label.values()))
-        print(f"✓ Retrieved chunks from {len(source_ids)} sources: {', '.join(source_ids)}")
-        print(f"✓ References will include only papers with extracted text: {len(source_references)} sources")
 
-        prompt = f"""You are a research analyst who writes concise, evidence-grounded technical syntheses.
+    evidence_text = _format_evidence_objects_for_prompt(evidence_objects, query_intent)
+    structure = _build_query_structure(query_intent.get("query_type", "general"))
+    comparison_pairs = query_intent.get("comparison_pairs", [])
+    comparison_text = "\n".join([f"- {a} vs {b}" for a, b in comparison_pairs])
+    if query_intent.get("query_type") == "comparison" and not comparison_text:
+        comparison_text = "- No explicit comparison pair found"
 
-RETRIEVED EVIDENCE:
-{formatted_chunks}
+    prompt = f"""You are a research analyst who writes concise, evidence-grounded technical syntheses.
 
-RESEARCH QUERY: {query}
+{evidence_text}
+QUERY: {query}
+FOCUS TERMS: {', '.join(query_intent.get('focus_terms', []))}
+COMPARISON PAIRS: {comparison_text}
 
-TASK: Synthesize the evidence into a structured research report. Cite every claim with numeric brackets [N]. Avoid unsupported language.
+TASK: Use only the structured evidence above to answer the query. Rely on extracted findings, metrics, tradeoffs, limitations, and methodological details. Cite every technical claim with numeric brackets [N]. Avoid unsupported claims and do not invent comparisons that are not directly supported.
 
 STRUCTURE:
-1. INTRODUCTION: 2-3 sentences about scope and significance.
-2. METHODS & APPROACHES: Compare technical approaches and architectures.
-3. FINDINGS: List the strongest evidence-backed insights.
-4. LIMITATIONS & CHALLENGES: Note weaknesses or open problems.
-5. FUTURE DIRECTIONS: Extract stated future work or likely next steps.
-6. CONCLUSION: Provide a brief, grounded summary.
+{structure}
 
-Do not use internal labels such as Source N or Chunk M in the final answer. Do not generate a References section; it will be appended after your answer.
+Do not use internal evidence labels in the final answer. Do not generate a References section; it will be appended after your answer.
 
-OUTPUT ONLY THE REPORT. Begin now:
-1. INTRODUCTION"""
-        
-        # Use the installed OllamaLLM API directly with a prompt list
-        client = _get_ollama_client()
-        response = client.generate([prompt])
-        answer = response.generations[0][0].text
-        
-        # Sort references by source number for consistent output
-        sorted_refs = sorted(source_references.items(), 
-                            key=lambda x: int(x[0].split()[-1]))
-        
-        # Build mapping from old source labels (Source N) to new sequential ref numbers [1], [2], etc.
-        old_to_new_ref_num = {}
-        for new_num, (old_label, _) in enumerate(sorted_refs, 1):
-            old_source_num = int(old_label.split()[-1])
-            old_to_new_ref_num[old_source_num] = new_num
-        
-        # Post-process: verify and replace internal citations with clean academic format
-        verified_answer, citation_stats = post_process_citations(answer, source_references, old_to_new_ref_num)
-        verified_answer = clean_final_answer(verified_answer, old_to_new_ref_num)
-        if diagnostics is not None:
-            diagnostics["citation_cleanup_count"] = citation_stats.get("placeholder_removed", 0) + citation_stats.get("invalid", 0)
-            diagnostics["grounding_validation"] = {
-                "replaced": citation_stats.get("replaced", 0),
-                "invalid": citation_stats.get("invalid", 0),
-                "placeholder_removed": citation_stats.get("placeholder_removed", 0),
-            }
-        
-        # Build structured References section with new sequential numbering and clean DOIs
-        references_section = "\n\nREFERENCES\n"
-        
-        for new_num, (old_label, info) in enumerate(sorted_refs, 1):
-            # Ensure this paper is in papers_with_extracted_text
-            if info.get("paper_id") not in papers_with_extracted_text:
-                continue
-                
-            authors = info.get("authors", [])
-            year = info.get("year")
-            venue = info.get("venue")
-            doi = info.get("doi")
-            url = info.get("url")
-            title = info.get("title", "Unknown Title")
-            
-            # Format: [N] AuthorLastName et al. (Year). Title. Venue. DOI/URL
-            if authors:
-                author_str = authors[0].split()[-1] + " et al." if len(authors) > 1 else authors[0]
-            else:
-                author_str = "Unknown"
-            
-            ref = f"[{new_num}] {author_str}"
-            if year:
-                ref += f" ({year})"
-            ref += f". {title}."
-            if venue:
-                ref += f" {venue}."
-            
-            # Fix 1: Normalize DOI to prevent duplication
-            clean_doi = normalize_doi(doi)
-            if clean_doi:
-                ref += f" https://doi.org/{clean_doi}"
-            elif url:
-                ref += f" {url}"
-            
-            references_section += ref + "\n"
-        
-        return verified_answer + references_section
-    
-    # Handle comparison queries with specialized synthesis
-    if is_comparison_query:
-        # Use the comparison-aware prompt with client
-        client = _get_ollama_client()
-        response = client.generate([prompt])
-        answer = response.generations[0][0].text
-        
-        # Build references from documents
-        source_references = {}
-        source_to_label = {}
-        label_counter = 1
-        phantom_refs_logged = set()
-        
-        for doc in docs:
-            paper_id = doc.metadata.get("paper_id", "unknown")
-            
-            if paper_id not in papers_with_extracted_text:
-                if paper_id not in phantom_refs_logged:
-                    print(f"⚠ Skipping phantom reference for {paper_id}")
-                    phantom_refs_logged.add(paper_id)
-                continue
-            
-            if paper_id not in source_to_label:
-                label = f"Source {label_counter}"
-                source_to_label[paper_id] = label
-                original_meta = metadata_store.get(paper_id, {})
-                source_references[label] = original_meta
-                label_counter += 1
-        
-        # Sort and build references
-        sorted_refs = sorted(source_references.items(), 
-                            key=lambda x: int(x[0].split()[-1]))
-        
-        old_to_new_ref_num = {}
-        for new_num, (old_label, _) in enumerate(sorted_refs, 1):
-            old_source_num = int(old_label.split()[-1])
-            old_to_new_ref_num[old_source_num] = new_num
-        
-        verified_answer, citation_stats = post_process_citations(answer, source_references, old_to_new_ref_num)
-        verified_answer = clean_final_answer(verified_answer, old_to_new_ref_num)
-        if diagnostics is not None:
-            diagnostics["citation_cleanup_count"] = citation_stats.get("placeholder_removed", 0) + citation_stats.get("invalid", 0)
-            diagnostics["grounding_validation"] = {
-                "replaced": citation_stats.get("replaced", 0),
-                "invalid": citation_stats.get("invalid", 0),
-                "placeholder_removed": citation_stats.get("placeholder_removed", 0),
-            }
-        
-        references_section = "\n\nREFERENCES\n"
-        for new_num, (old_label, info) in enumerate(sorted_refs, 1):
-            if info.get("paper_id") not in papers_with_extracted_text:
-                continue
-            
-            authors = info.get("authors", [])
-            year = info.get("year")
-            venue = info.get("venue")
-            doi = info.get("doi")
-            url = info.get("url")
-            title = info.get("title", "Unknown Title")
-            
-            if authors:
-                author_str = authors[0].split()[-1] + " et al." if len(authors) > 1 else authors[0]
-            else:
-                author_str = "Unknown"
-            
-            ref = f"[{new_num}] {author_str}"
-            if year:
-                ref += f" ({year})"
-            ref += f". {title}."
-            if venue:
-                ref += f" {venue}."
-            
-            clean_doi = normalize_doi(doi)
-            if clean_doi:
-                ref += f" https://doi.org/{clean_doi}"
-            elif url:
-                ref += f" {url}"
-            
-            references_section += ref + "\n"
-        
-        return verified_answer + references_section
-    
-    # Should not reach here, but return empty string as fallback
-    return ""
+OUTPUT ONLY THE REPORT. Begin now."""
+    return prompt
+
+
+def generate_answer(query, evidence_objects, papers, metadata_store, papers_with_extracted_text, query_intent: dict = None, diagnostics: dict = None):
+    """Generate an answer based on structured evidence objects with proper source tracking."""
+    if query_intent is None:
+        query_intent = {"query_type": "general", "focus_terms": [], "comparison_pairs": []}
+
+    if evidence_objects is None:
+        evidence_objects = []
+
+    if not evidence_objects:
+        return "No structured evidence extracted to support the answer."
+
+    prompt = generate_structured_evidence_prompt(query, evidence_objects, query_intent)
+    client = _get_ollama_client()
+    response = client.generate([prompt])
+    answer = response.generations[0][0].text
+
+    source_references, paper_order = _build_source_references(evidence_objects, metadata_store, papers_with_extracted_text)
+    source_labels = {paper_id: f"Source {idx+1}" for idx, paper_id in enumerate(paper_order)}
+    old_to_new_ref_num = {idx + 1: idx + 1 for idx in range(len(paper_order))}
+
+    verified_answer, citation_stats = post_process_citations(answer, {label: source_references[paper_id] for paper_id, label in zip(paper_order, source_labels.values())}, old_to_new_ref_num)
+    verified_answer = clean_final_answer(verified_answer, old_to_new_ref_num)
+
+    if diagnostics is not None:
+        diagnostics["citation_cleanup_count"] = citation_stats.get("placeholder_removed", 0) + citation_stats.get("invalid", 0)
+        diagnostics["grounding_validation"] = {
+            "replaced": citation_stats.get("replaced", 0),
+            "invalid": citation_stats.get("invalid", 0),
+            "placeholder_removed": citation_stats.get("placeholder_removed", 0),
+        }
+
+    references_section = "\n\nREFERENCES\n"
+    for idx, paper_id in enumerate(paper_order, start=1):
+        info = source_references.get(paper_id, {})
+        authors = info.get("authors", [])
+        year = info.get("year")
+        venue = info.get("venue")
+        doi = info.get("doi")
+        url = info.get("url")
+        title = info.get("title", "Unknown Title")
+
+        if authors:
+            author_str = authors[0].split()[-1] + " et al." if len(authors) > 1 else authors[0]
+        else:
+            author_str = "Unknown"
+
+        ref = f"[{idx}] {author_str}"
+        if year:
+            ref += f" ({year})"
+        ref += f". {title}."
+        if venue:
+            ref += f" {venue}."
+
+        clean_doi = normalize_doi(doi)
+        if clean_doi:
+            ref += f" https://doi.org/{clean_doi}"
+        elif url:
+            ref += f" {url}"
+
+        references_section += ref + "\n"
+
+    return verified_answer + references_section
 
 
 def post_process_citations(answer, source_references, old_to_new_ref_num):

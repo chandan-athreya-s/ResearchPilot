@@ -5,6 +5,7 @@ from typing import Any
 from app.agents.base_agent import BaseAgent
 from app.core.state import ResearchState
 from app.services.hybrid_retrieval import hybrid_retrieve
+from app.services.rate_limit_manager import get_rate_limit_manager
 
 
 class RetrievalAgent(BaseAgent):
@@ -28,6 +29,8 @@ class RetrievalAgent(BaseAgent):
             state.diagnostics["paper_count"] = len(papers)
             state.diagnostics["retrieval_source_counts"] = hybrid_results.get("source_counts", {})
             state.diagnostics["candidate_count"] = hybrid_results.get("candidate_count", 0)
+            state.diagnostics["disabled_sources"] = hybrid_results.get("disabled_sources", [])
+            state.diagnostics["source_health"] = hybrid_results.get("source_health", get_rate_limit_manager().get_status())
             self._log(f"Fetched {len(papers)} papers from hybrid retrieval")
         except Exception as error:
             error_message = f"Paper retrieval failed: {error}"

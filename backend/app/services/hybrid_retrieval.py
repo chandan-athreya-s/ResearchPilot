@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from app.agents.relevance_verifier_agent import compute_relevance_score, extract_query_entities
 from app.services.core_client import fetch_core_papers
 from app.services.openalex_client import fetch_papers as fetch_openalex_papers
+from app.services.rate_limit_manager import get_rate_limit_manager
 
 DOMAIN_BOOST_TERMS = [
     "retrieval augmented generation",
@@ -144,15 +145,37 @@ def hybrid_retrieve(
     if query_intent is None:
         query_intent = {}
 
+    rate_limit_mgr = get_rate_limit_manager()
     source_counts = defaultdict(int)
     all_papers: List[Dict[str, Any]] = []
 
     search_queries = [query] + [q for q in expanded_queries if q != query]
     search_queries = search_queries[:6]
 
+    openalex_enabled = rate_limit_mgr.is_enabled("openalex")
+    core_enabled = rate_limit_mgr.is_enabled("core")
+    disabled_sources = [source for source, enabled in (("openalex", openalex_enabled), ("core", core_enabled)) if not enabled]
+
+    if disabled_sources:
+        print(f"[hybrid_retrieval] disabled sources: {disabled_sources}. Will rely on cached results where available.")
+
     for search_query in search_queries:
-        openalex_papers = fetch_openalex_papers(search_query, max_results=max_results_per_source)
-        core_papers = fetch_core_papers(search_query, max_results=max_results_per_source)
+        openalex_papers = []
+        core_papers = []
+
+        if rate_limit_mgr.is_enabled("openalex"):
+            try:
+                openalex_papers = fetch_openalex_papers(search_query, max_results=max_results_per_source)
+            except Exception as exc:
+                print(f"[hybrid_retrieval] OpenAlex fetch failed for query '{search_query}': {exc}")
+                openalex_papers = []
+
+        if rate_limit_mgr.is_enabled("core"):
+            try:
+                core_papers = fetch_core_papers(search_query, max_results=max_results_per_source)
+            except Exception as exc:
+                print(f"[hybrid_retrieval] CORE fetch failed for query '{search_query}': {exc}")
+                core_papers = []
 
         for paper in openalex_papers:
             paper["source"] = paper.get("source", "openalex")
@@ -183,4 +206,6 @@ def hybrid_retrieve(
         "source_counts": dict(source_counts),
         "candidate_count": len(unique_papers),
         "scored_candidates": [{"paper_id": item["paper"].get("paper_id"), "score": round(item["score"], 3)} for item in scored],
+        "disabled_sources": disabled_sources,
+        "source_health": rate_limit_mgr.get_status(),
     }

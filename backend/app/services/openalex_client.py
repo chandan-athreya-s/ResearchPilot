@@ -2,6 +2,15 @@ import requests
 import re
 
 from app.services.query_analyzer import analyze_query
+from app.services.rate_limit_manager import get_rate_limit_manager
+from app.services.retrieval_cache import get_retrieval_cache
+
+
+def _debug_response(response: requests.Response, context: str) -> None:
+    print(f"[{context}] STATUS: {response.status_code}")
+    print(f"[{context}] HEADERS: {dict(response.headers)}")
+    body = getattr(response, "text", "") or ""
+    print(f"[{context}] BODY: {body[:500]}")
 
 BASE_URL = "https://api.openalex.org/works"
 
@@ -56,14 +65,69 @@ def build_search_query(query: str) -> str:
 
 
 def fetch_papers(query, max_results=8):
+    rate_limit_mgr = get_rate_limit_manager()
+    cache = get_retrieval_cache()
+    cached = cache.get(query, "openalex")
+    if cached is not None:
+        print(f"[OpenAlex] Cache hit for query: {query[:50]}...")
+        return cached
+
+    if not rate_limit_mgr.is_enabled("openalex"):
+        remaining = rate_limit_mgr.get_time_until_retry("openalex")
+        print(f"[OpenAlex] Rate limited. Retry in {remaining:.1f}s")
+        return []
+
     params = {
         "search": build_search_query(query),
         "per-page": max_results,
         "filter": "is_oa:true,concepts.id:C41008148"
     }
 
-    response = requests.get(BASE_URL, params=params)
-    data = response.json()
+    try:
+        response = requests.get(BASE_URL, params=params, timeout=12)
+    except requests.exceptions.RequestException as exc:
+        print(f"[OpenAlex] network failure: {exc}")
+        rate_limit_mgr.record_network_error("openalex")
+        return []
+
+    if response.status_code == 429:
+        retry_after = None
+        if "retry-after" in response.headers:
+            try:
+                retry_after = int(response.headers["retry-after"])
+            except ValueError:
+                pass
+        rate_limit_mgr.record_rate_limit("openalex", retry_after)
+        return []
+
+    if response.status_code != 200:
+        _debug_response(response, "OpenAlex non-200 response")
+        rate_limit_mgr.record_network_error("openalex")
+        return []
+
+    text = getattr(response, "text", "") or ""
+    if not text.strip():
+        print("[OpenAlex] empty response body")
+        return []
+
+    if "<html" in text.lower() or "<!doctype html" in text.lower():
+        _debug_response(response, "OpenAlex HTML error response")
+        return []
+
+    try:
+        data = response.json()
+    except Exception as exc:
+        print("OpenAlex JSON PARSE FAILED")
+        _debug_response(response, "OpenAlex malformed JSON")
+        print(f"[OpenAlex] parse exception: {exc}")
+        rate_limit_mgr.record_network_error("openalex")
+        return []
+
+    if not isinstance(data, dict):
+        print("[OpenAlex] unexpected response format, expected JSON object")
+        _debug_response(response, "OpenAlex unexpected JSON format")
+        rate_limit_mgr.record_network_error("openalex")
+        return []
 
     papers = []
 
@@ -101,5 +165,10 @@ def fetch_papers(query, max_results=8):
             "pdf_url": pdf_url,
             "open_access": item.get("open_access", {})
         })
+
+    if papers:
+        cache.set(query, "openalex", papers)
+        rate_limit_mgr.record_success("openalex")
+        print(f"[OpenAlex] Successfully fetched {len(papers)} papers")
 
     return papers

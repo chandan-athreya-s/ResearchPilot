@@ -14,3 +14,10 @@ venv/
 myspace/
 .venv/
 sessions/
+
+# temp files
+01.py
+
+# notes/docs
+COMPARISON_SYNTHESIS_EXAMPLE.md
+IMPROVEMENTS_SUMMARY.md
