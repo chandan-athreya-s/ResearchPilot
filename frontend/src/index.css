@@ -5,18 +5,64 @@
 :root {
   color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --bg: #020617;
+  --surface: #111827;
+  --surface-soft: rgba(15, 23, 42, 0.95);
+  --panel: #0f172a;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.18);
+  --border: rgba(255, 255, 255, 0.08);
+  --surface-light: #f8fafc;
+  --surface-soft-light: rgba(248, 250, 252, 0.92);
+  --panel-light: #ffffff;
+  --text-light: #0f172a;
+  --muted-light: #64748b;
+  --border-light: rgba(15, 23, 42, 0.08);
+  --border-soft-light: rgba(15, 23, 42, 0.06);
 }
 
-html {
+html.dark {
   background: radial-gradient(circle at top, rgba(124, 58, 237, 0.18), transparent 30%),
     radial-gradient(circle at 20% 10%, rgba(56, 189, 248, 0.08), transparent 18%),
-    #020617;
+    var(--bg);
+}
+
+html.dark body {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+html.dark .bg-white,
+html.dark .bg-white\/5,
+html.dark .bg-white\/10,
+html.dark .bg-white\/20,
+html.dark .bg-white\/50,
+html.dark .bg-white\/70,
+html.dark .bg-white\/80,
+html.dark .bg-white\/90,
+html.dark .bg-white\/95,
+html.dark .bg-white\/100 {
+  background-color: rgba(15, 23, 42, 0.92) !important;
+}
+
+html.dark .text-slate-900,
+html.dark .text-slate-800 {
+  color: #e2e8f0 !important;
+}
+
+html.light {
+  color-scheme: light;
+  background: radial-gradient(circle at top, rgba(59, 130, 246, 0.14), transparent 30%),
+    radial-gradient(circle at 20% 10%, rgba(96, 165, 250, 0.08), transparent 18%),
+    #eff6ff;
 }
 
 body {
   min-height: 100vh;
-  background-color: #020617;
-  color: #e2e8f0;
+  background-color: var(--bg);
+  color: var(--text);
 }
 
 body::before {
@@ -40,44 +86,81 @@ select {
   background: rgba(124, 58, 237, 0.35);
 }
 
-html.light {
-  background: radial-gradient(circle at top, rgba(59, 130, 246, 0.16), transparent 30%),
-    radial-gradient(circle at 20% 10%, rgba(96, 165, 250, 0.1), transparent 18%),
-    #eff6ff;
-}
-
 html.light body {
-  background-color: #eff6ff;
+  background-color: #f8fafc;
   color: #0f172a;
 }
 
 html.light body::before {
-  background-image: radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.12), transparent 20%),
-    radial-gradient(circle at 90% 25%, rgba(96, 165, 250, 0.08), transparent 18%);
+  background-image: radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.08), transparent 20%),
+    radial-gradient(circle at 90% 25%, rgba(96, 165, 250, 0.05), transparent 18%);
 }
 
 html.light .bg-surface-900,
-html.light .bg-slate-950 {
-  background-color: rgba(255, 255, 255, 0.95) !important;
+html.light .bg-slate-950,
+html.light .bg-slate-900 {
+  background-color: #ffffff !important;
 }
 
+html.light .bg-surface-800,
+html.light .bg-surface-800\/80,
+html.light .bg-surface-800\/90,
+html.light .bg-slate-900\/80,
+html.light .bg-slate-950\/80,
 html.light .bg-surface-900\/95,
 html.light .bg-surface-900\/80,
 html.light .bg-surface-900\/75,
 html.light .bg-surface-900\/70,
-html.light .bg-slate-800 {
-  background-color: rgba(255, 255, 255, 0.9) !important;
+html.light .bg-slate-800,
+html.light .bg-slate-800\/70,
+html.light .bg-slate-900\/90,
+html.light .bg-slate-900\/95,
+html.light .bg-slate-900\/70,
+html.light .bg-white\/90,
+html.light .bg-white\/95 {
+  background-color: rgba(255, 255, 255, 0.92) !important;
 }
 
-html.light .border-white\/10,
+html.light .bg-white\/5,
+html.light .bg-white\/10 {
+  background-color: rgba(15, 23, 42, 0.04) !important;
+}
+
+html.light .border-white\/10 {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+html.light .border-white\/5,
 html.light .border-slate-800 {
-  border-color: rgba(15, 23, 42, 0.12) !important;
+  border-color: rgba(15, 23, 42, 0.06) !important;
 }
 
 html.light .text-white,
-html.light .text-slate-200,
-html.light .text-slate-300,
+html.light .text-slate-100 {
+  color: #0f172a !important;
+}
+
+html.light .text-slate-200 {
+  color: #334155 !important;
+}
+
+html.light .text-slate-300 {
+  color: #475569 !important;
+}
+
 html.light .text-slate-400,
 html.light .text-slate-500 {
-  color: #334155 !important;
+  color: #64748b !important;
+}
+
+html.light .bg-slate-900\/90 {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-slate-950\/95 {
+  background-color: #f8fafc !important;
+}
+
+html.light .hover\:bg-slate-800\/90:hover {
+  background-color: #f1f5f9 !important;
 }

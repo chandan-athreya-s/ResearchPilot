@@ -8,8 +8,8 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantStyles: Record<NonNullable<ButtonProps["variant"]>, string> = {
   default: "bg-accent-500 text-white hover:bg-accent-400",
-  secondary: "bg-surface-800 text-slate-200 hover:bg-surface-700",
-  ghost: "bg-transparent text-slate-200 hover:bg-white/5",
+  secondary: "bg-surface-800 dark:text-slate-200 text-slate-900 hover:bg-surface-700 dark:hover:bg-surface-700",
+  ghost: "bg-transparent dark:text-slate-200 text-slate-900 hover:text-slate-900 dark:hover:text-white",
 };
 
 const sizeStyles: Record<NonNullable<ButtonProps["size"]>, string> = {

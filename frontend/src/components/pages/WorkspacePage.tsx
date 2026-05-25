@@ -179,6 +179,8 @@ export default function WorkspacePage() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [isJobBasedMode, setIsJobBasedMode] = useState(true);
   const [pollingEnabled, setPollingEnabled] = useState(true);
+  const [selectedPaperIndex, setSelectedPaperIndex] = useState(0);
+  const [paperModalOpen, setPaperModalOpen] = useState(false);
   const pollingRef = useRef<number | null>(null);
 
   const THEME_STORAGE_KEY = "researchPilotTheme";
@@ -314,6 +316,22 @@ export default function WorkspacePage() {
     })) ?? [];
   }, [currentResult]);
 
+  useEffect(() => {
+    setSelectedPaperIndex(0);
+  }, [paperCards.length]);
+
+  function getProgressPercent(status?: JobStatus | null) {
+    if (!status) return 0;
+    if (typeof status.progress_percentage === "number") return status.progress_percentage;
+    if (status.status === "completed") return 100;
+    if (status.status === "failed" || status.status === "cancelled") return 100;
+    const index = agentNames.findIndex((name) => name === status.current_agent);
+    if (index >= 0) {
+      return Math.round(((index + 1) / agentNames.length) * 92) + 4;
+    }
+    return status.status === "running" ? 12 : 0;
+  }
+
   function previewText(summary?: string, query?: string, title?: string) {
     const fallback = query ? `Research session on ${query}` : title ? title : "Research session";
     if (!summary) return fallback;
@@ -390,7 +408,7 @@ export default function WorkspacePage() {
     }
   }
 
-  const progress = clampProgress(jobStatus?.progress_percentage ?? 0);
+  const progress = clampProgress(getProgressPercent(jobStatus));
 
   const handleSubmit = async () => {
     if (!query.trim()) {
@@ -450,7 +468,7 @@ export default function WorkspacePage() {
             variant={theme === "dark" ? "default" : "secondary"}
             onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
           >
-            {theme === "dark" ? "Dark theme" : "Light theme"}
+            {theme === "dark" ? "Switch to light" : "Switch to dark"}
           </Button>
           <Button
             size="sm"
@@ -715,38 +733,89 @@ export default function WorkspacePage() {
               {paperCards.length === 0 ? (
                 <p className="text-sm text-slate-400">No papers available yet. Run a query to load results.</p>
               ) : (
-                paperCards.slice(0, 6).map((paper) => (
-                  <div key={paper.id || paper.title} className="rounded-3xl border border-white/10 bg-surface-900/80 p-4">
-                    <div className="flex items-start justify-between gap-3">
+                <>
+                  <div className="rounded-3xl border border-white/10 bg-surface-900/80 p-6">
+                    <div className="flex items-center justify-between gap-4">
                       <div>
-                        <p className="font-semibold text-white">{paper.title}</p>
-                        <p className="mt-2 text-sm leading-6 text-slate-400">{paper.abstract?.slice(0, 140) || "Abstract not available."}</p>
+                        <p className="text-sm uppercase tracking-[0.24em] text-accent-400">Featured paper</p>
+                        <p className="mt-1 text-xs text-slate-400">Showing {selectedPaperIndex + 1} of {paperCards.length}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPaperIndex((prev) => (prev - 1 + paperCards.length) % paperCards.length)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                        >
+                          ←
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPaperIndex((prev) => (prev + 1) % paperCards.length)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white transition hover:bg-white/10"
+                        >
+                          →
+                        </button>
                       </div>
                     </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-400">
-                      <span>{paper.authors?.slice(0, 2).join(", ") || "Unknown authors"}</span>
-                      <span>•</span>
-                      <span>{paper.source}</span>
-                      <span>•</span>
-                      <span>Relevance {paper.relevance_score?.toFixed(1)}</span>
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
-                      {paper.pdf_url ? (
-                        <a href={paper.pdf_url} target="_blank" rel="noreferrer" className="text-sm text-accent-300 hover:text-accent-400">
-                          Open PDF
-                        </a>
-                      ) : null}
-                      {paper.url ? (
-                        <a href={paper.url} target="_blank" rel="noreferrer" className="text-sm text-slate-300 hover:text-white">
-                          View source
-                        </a>
-                      ) : null}
-                    </div>
+
+                    {paperCards[selectedPaperIndex] && (
+                      <div className="mt-6 rounded-[2rem] border border-white/10 bg-surface-800/90 p-6 shadow-soft">
+                        <p className="text-lg font-semibold text-white">{paperCards[selectedPaperIndex].title}</p>
+                        <p className="mt-3 text-sm leading-7 text-slate-300">{paperCards[selectedPaperIndex].authors?.slice(0, 3).join(", ") || "Unknown authors"}</p>
+                        <div className="mt-5 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setPaperModalOpen(true)}
+                            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
+                          >
+                            View all →
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))
+                </>
               )}
             </div>
           </Card>
+
+          {paperModalOpen ? (
+            <div className="fixed inset-0 z-50 bg-slate-950/95 p-0">
+              <div className="flex h-screen w-full flex-col overflow-hidden bg-slate-950/95 shadow-soft">
+                <div className="flex flex-col gap-4 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm uppercase tracking-[0.24em] text-accent-400">Paper details</p>
+                    <h3 className="text-2xl font-semibold text-white">Complete paper collection</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPaperModalOpen(false)}
+                    className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6">
+                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {paperCards.map((paper, index) => (
+                      <button
+                        key={paper.id || `${paper.title}-${index}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPaperIndex(index);
+                          setPaperModalOpen(false);
+                        }}
+                        className="rounded-3xl border border-white/10 bg-slate-900/90 p-6 text-left transition hover:bg-slate-800/90"
+                      >
+                        <p className="text-lg font-semibold text-white">{paper.title}</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-400">{paper.authors?.slice(0, 3).join(", ") || "Unknown authors"}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <Card className="space-y-4">
             <div>
