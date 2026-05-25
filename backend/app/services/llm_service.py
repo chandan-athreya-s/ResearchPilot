@@ -124,15 +124,52 @@ COMPARISON FOCUS:
 
 TASK: Compare the listed approaches using only the evidence above. Cite every technical claim as [N]. Avoid unsupported claims.
 
+STRICT OUTPUT FORMAT:
+- Return ONLY properly formatted markdown.
+- Use `#` for top-level sections and `##` for subsection headings.
+- Each heading must have a blank line before and a blank line after.
+- Use dashes only for bullet lists (`- item`).
+- Keep paragraphs short and separated by one blank line.
+- Do not generate inline headings inside paragraphs.
+- Do not output YAML front matter, HTML wrappers, or raw JSON.
+- Do not merge sections or create giant text walls.
+- Return ONLY the markdown report and nothing else.
+
+OUTPUT TEMPLATE:
+# Executive Summary
+
+Paragraph text here...
+
+# Methods & Approaches
+
+Paragraph text here...
+
+# Findings
+
+- Finding 1
+- Finding 2
+- Finding 3
+
+# Limitations
+
+- Limitation 1
+- Limitation 2
+
+# Future Directions
+
+Paragraph text here...
+
+# Conclusion
+
+Paragraph text here...
+
 STRUCTURE:
 1. EXECUTIVE SUMMARY: Key technical differences and most significant distinction.
-2. Methodological Approach: Compare algorithmic/design choices.
-3. PERFORMANCE ANALYSIS: Compare metrics, results, and benchmarks.
-4. COMPUTATIONAL TRADEOFFS: Compare efficiency, memory, and scalability.
-5. USE CASE SUITABILITY: When each approach is most appropriate.
-6. EXPLICITLY IDENTIFIED TRADEOFFS: Explicit tradeoffs from the papers.
-7. GAPS: What remains unresolved or under-addressed.
-8. CONCLUSION: Grounded synthesis, no new speculation.
+2. METHODS & APPROACHES: Compare algorithmic/design choices.
+3. FINDINGS: Compare metrics, results, and benchmarks.
+4. LIMITATIONS: Explicit tradeoffs and gaps from the papers.
+5. FUTURE DIRECTIONS: Practical implications and next steps.
+6. CONCLUSION: Grounded synthesis, no new speculation.
 
 Do not use internal labels such as Source N or Chunk M in the final report. Do not generate a References section; it will be appended after your answer."""
     return prompt
@@ -260,6 +297,36 @@ def clean_final_answer(answer: str, old_to_new_ref_num: dict) -> str:
     return answer
 
 
+def normalize_markdown_whitespace(answer: str) -> str:
+    """Normalize markdown spacing, headings, and list formatting for cleaner rendering."""
+    if not answer:
+        return answer
+
+    answer = answer.replace("\r\n", "\n").replace("\r", "\n")
+    answer = re.sub(r"\n{3,}", "\n\n", answer)
+    answer = re.sub(r"\s+(#{1,6})\s+", r"\n\1 ", answer)
+
+    lines = answer.split("\n")
+    normalized_lines = []
+    for i, raw_line in enumerate(lines):
+        line = raw_line.rstrip()
+        heading_match = re.match(r"^(#{1,6})\s*(.+)$", line)
+        if heading_match:
+            if normalized_lines and normalized_lines[-1] != "":
+                normalized_lines.append("")
+            heading_text = heading_match.group(2).strip()
+            normalized_lines.append(f"{heading_match.group(1)} {heading_text}")
+            if i + 1 < len(lines) and lines[i + 1].strip() != "":
+                normalized_lines.append("")
+            continue
+        line = re.sub(r"^(\s*)[*+]\s+", r"\1- ", line)
+        normalized_lines.append(line)
+
+    normalized = "\n".join(normalized_lines)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
+    return normalized
+
+
 def compress_context_chunks(docs, max_chars: int = 1200):
     """Compress document content to reduce prompt bloat while preserving meaning."""
     for doc in docs:
@@ -337,30 +404,29 @@ def _format_evidence_objects_for_prompt(evidence_objects, query_intent: dict = N
 def _build_query_structure(query_type: str) -> str:
     if query_type == "comparison":
         return (
-            "1. EXECUTIVE SUMMARY: Key technical distinctions and strongest evidence-backed difference.\n"
-            "2. METHODOLOGIES: Compare algorithmic and architectural choices.\n"
-            "3. PERFORMANCE & BENCHMARK ANALYSIS: Compare metrics, dataset results, and benchmark behavior.\n"
-            "4. TRADEOFFS & SCALABILITY: Compare computational cost, memory, latency, and operational tradeoffs.\n"
-            "5. LIMITATIONS & GAPS: Identify weaknesses, bottlenecks, and unresolved issues.\n"
-            "6. COVERAGE: Ensure all major query entities are represented.\n"
-            "7. CONCLUSION: Evidence-grounded recommendation with no unsupported claims."
+            "1. EXECUTIVE SUMMARY: Key technical distinctions and most significant evidence-backed difference.\n"
+            "2. METHODS & APPROACHES: Compare algorithmic, architectural, and design choices.\n"
+            "3. FINDINGS: Compare performance metrics, benchmarks, and empirical evidence.\n"
+            "4. LIMITATIONS: Highlight specific weaknesses, tradeoffs, and gaps.\n"
+            "5. FUTURE DIRECTIONS: Suggest next research steps or applied improvements.\n"
+            "6. CONCLUSION: Evidence-grounded synthesis and recommendation."
         )
     if query_type == "survey":
         return (
             "1. EXECUTIVE SUMMARY: What the evidence says about the topic.\n"
-            "2. METHODS & TRENDS: Summarize methodologies and emerging patterns.\n"
-            "3. DATASETS & BENCHMARKS: Highlight the most common evaluation settings.\n"
-            "4. FINDINGS: Key results supported by extracted metrics.\n"
-            "5. LIMITATIONS: Main constraints and research gaps.\n"
+            "2. METHODS & APPROACHES: Summarize methodologies and emerging patterns.\n"
+            "3. FINDINGS: Highlight strong evidence-backed results.\n"
+            "4. LIMITATIONS: Main constraints and research gaps.\n"
+            "5. FUTURE DIRECTIONS: Implications and likely next directions.\n"
             "6. CONCLUSION: Evidence-grounded survey synopsis."
         )
     if query_type == "challenges":
         return (
             "1. EXECUTIVE SUMMARY: Main challenge areas and evidence-backed concerns.\n"
-            "2. LIMITATIONS & BOTTLENECKS: List observed weaknesses and performance obstacles.\n"
-            "3. SCALABILITY & COMPUTATIONAL CONCERNS: Highlight costs, overhead, and failure modes.\n"
-            "4. TRADEOFFS: Identify key compromises and risks.\n"
-            "5. OPEN PROBLEMS: Where evidence reports remaining gaps.\n"
+            "2. METHODS & APPROACHES: What the evidence says about technical approaches and obstacles.\n"
+            "3. FINDINGS: Key observations and operational consequences.\n"
+            "4. LIMITATIONS: List observed weaknesses, bottlenecks, and failure modes.\n"
+            "5. FUTURE DIRECTIONS: Suggested mitigation strategies and research priorities.\n"
             "6. CONCLUSION: Grounded risk assessment and future directions."
         )
     return (
@@ -396,7 +462,7 @@ def generate_structured_evidence_prompt(query, evidence_objects, query_intent: d
     if query_intent.get("query_type") == "comparison" and not comparison_text:
         comparison_text = "- No explicit comparison pair found"
 
-    prompt = f"""You are a research analyst who writes concise, evidence-grounded technical syntheses.
+    prompt = f"""You are a research analyst who writes polished, evidence-grounded technical syntheses in professional markdown format.
 
 {evidence_text}
 QUERY: {query}
@@ -405,10 +471,51 @@ COMPARISON PAIRS: {comparison_text}
 
 TASK: Use only the structured evidence above to answer the query. Rely on extracted findings, metrics, tradeoffs, limitations, and methodological details. Cite every technical claim with numeric brackets [N]. Avoid unsupported claims and do not invent comparisons that are not directly supported.
 
+STRICT OUTPUT FORMAT:
+- Return ONLY properly formatted markdown.
+- Use `#` for top-level sections and `##` for subsection headings.
+- Each heading must have a blank line before and a blank line after.
+- Use dashes only for bullet lists (`- item`).
+- Keep paragraphs short and separated by one blank line.
+- Do not generate inline headings inside paragraphs.
+- Do not output YAML front matter, HTML wrappers, or raw JSON.
+- Do not merge sections or create giant text walls.
+- Do not repeat `###` symbols inline in the same line.
+- Do not generate a References section; references will be rendered separately by the system.
+- Return ONLY the markdown report and nothing else.
+
+OUTPUT TEMPLATE:
+# Executive Summary
+
+Paragraph text here...
+
+# Methods & Approaches
+
+## Example subsection
+
+Paragraph text here...
+
+# Findings
+
+- Finding 1
+- Finding 2
+- Finding 3
+
+# Limitations
+
+- Limitation 1
+- Limitation 2
+
+# Future Directions
+
+Paragraph text here...
+
+# Conclusion
+
+Paragraph text here...
+
 STRUCTURE:
 {structure}
-
-Do not use internal evidence labels in the final answer. Do not generate a References section; it will be appended after your answer.
 
 OUTPUT ONLY THE REPORT. Begin now."""
     return prompt
@@ -436,6 +543,7 @@ def generate_answer(query, evidence_objects, papers, metadata_store, papers_with
 
     verified_answer, citation_stats = post_process_citations(answer, {label: source_references[paper_id] for paper_id, label in zip(paper_order, source_labels.values())}, old_to_new_ref_num)
     verified_answer = clean_final_answer(verified_answer, old_to_new_ref_num)
+    verified_answer = normalize_markdown_whitespace(verified_answer)
 
     if diagnostics is not None:
         diagnostics["citation_cleanup_count"] = citation_stats.get("placeholder_removed", 0) + citation_stats.get("invalid", 0)
@@ -445,37 +553,7 @@ def generate_answer(query, evidence_objects, papers, metadata_store, papers_with
             "placeholder_removed": citation_stats.get("placeholder_removed", 0),
         }
 
-    references_section = "\n\nREFERENCES\n"
-    for idx, paper_id in enumerate(paper_order, start=1):
-        info = source_references.get(paper_id, {})
-        authors = info.get("authors", [])
-        year = info.get("year")
-        venue = info.get("venue")
-        doi = info.get("doi")
-        url = info.get("url")
-        title = info.get("title", "Unknown Title")
-
-        if authors:
-            author_str = authors[0].split()[-1] + " et al." if len(authors) > 1 else authors[0]
-        else:
-            author_str = "Unknown"
-
-        ref = f"[{idx}] {author_str}"
-        if year:
-            ref += f" ({year})"
-        ref += f". {title}."
-        if venue:
-            ref += f" {venue}."
-
-        clean_doi = normalize_doi(doi)
-        if clean_doi:
-            ref += f" https://doi.org/{clean_doi}"
-        elif url:
-            ref += f" {url}"
-
-        references_section += ref + "\n"
-
-    return verified_answer + references_section
+    return verified_answer
 
 
 def post_process_citations(answer, source_references, old_to_new_ref_num):
@@ -530,7 +608,9 @@ def post_process_citations(answer, source_references, old_to_new_ref_num):
         line = re.sub(r'\s+([.,;:])', r'\1', line)
         line = re.sub(r'\b(Source|Chunk)\b', '', line)
         
-        if line.strip():
+        if not line.strip():
+            processed_lines.append("")
+        else:
             processed_lines.append(line)
     
     total_replaced = citation_stats['replaced']
