@@ -1,9 +1,17 @@
-import requests
+import os
 import re
+
+import requests
+from dotenv import load_dotenv
 
 from app.services.query_analyzer import analyze_query
 from app.services.rate_limit_manager import get_rate_limit_manager
 from app.services.retrieval_cache import get_retrieval_cache
+
+load_dotenv()
+
+OPENALEX_API_KEY = os.getenv("OPENALEX_API_KEY") or os.getenv("OPENALEX_API_TOKEN") or ""
+OPENALEX_MAILTO = os.getenv("OPENALEX_MAILTO", "")
 
 
 def _debug_response(response: requests.Response, context: str) -> None:
@@ -82,9 +90,18 @@ def fetch_papers(query, max_results=8):
         "per-page": max_results,
         "filter": "is_oa:true,concepts.id:C41008148"
     }
+    headers = {"User-Agent": "ResearchPilot/1.0"}
+
+    if OPENALEX_API_KEY:
+        params["api_key"] = OPENALEX_API_KEY
+        headers["Authorization"] = f"Bearer {OPENALEX_API_KEY}"
+        headers["X-API-Key"] = OPENALEX_API_KEY
+
+    if OPENALEX_MAILTO:
+        params["mailto"] = OPENALEX_MAILTO
 
     try:
-        response = requests.get(BASE_URL, params=params, timeout=12)
+        response = requests.get(BASE_URL, params=params, headers=headers, timeout=12)
     except requests.exceptions.RequestException as exc:
         print(f"[OpenAlex] network failure: {exc}")
         rate_limit_mgr.record_network_error("openalex")

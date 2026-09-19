@@ -12,3 +12,4 @@ sentence-transformers
 pymupdf
 beautifulsoup4
 langchain-ollama
+huggingface-hub
