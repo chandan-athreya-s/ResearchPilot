@@ -1,4 +1,4 @@
-# ResearchPilot
+# Multi Agent RAG system for Academic Research Assistance
 
 ResearchPilot is a full-stack, multi-agent research assistant. It accepts a
 natural-language research question, discovers relevant open-access papers,
